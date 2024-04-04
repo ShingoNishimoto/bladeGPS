@@ -1,5 +1,7 @@
 #define _CRT_SECURE_NO_WARNINGS
 
+#include <signal.h>
+#include <setjmp.h>
 #include "bladegps.h"
 
 // for _getch used in Windows runtime.
@@ -9,6 +11,11 @@
 #else
 #include <unistd.h>
 #endif
+
+uint32_t tx_samplerate = (uint32_t)2.6e6;
+uint32_t num_iq_samples;
+uint32_t fifo_length;
+volatile sig_atomic_t eflag = 0;
 
 void init_sim(sim_t *s)
 {
@@ -38,7 +45,7 @@ size_t get_sample_length(sim_t *s)
 
 	length = s->head - s->tail;
 	if (length < 0)
-		length += FIFO_LENGTH;
+		length += fifo_length;
 
 	return((size_t)length);
 }
@@ -56,7 +63,7 @@ size_t fifo_read(int16_t *buffer, size_t samples, sim_t *s)
 
 	length = samples; // return value
 
-	samples_remaining = FIFO_LENGTH - s->tail;
+	samples_remaining = fifo_length - s->tail;
 
 	if (samples > samples_remaining) {
 		memcpy(buffer_current, &(s->fifo[s->tail * 2]), samples_remaining * sizeof(int16_t) * 2);
@@ -67,8 +74,8 @@ size_t fifo_read(int16_t *buffer, size_t samples, sim_t *s)
 
 	memcpy(buffer_current, &(s->fifo[s->tail * 2]), samples * sizeof(int16_t) * 2);
 	s->tail += (long)samples;
-	if (s->tail >= FIFO_LENGTH)
-		s->tail -= FIFO_LENGTH;
+	if (s->tail >= fifo_length)
+		s->tail -= fifo_length;
 
 	return(length);
 }
@@ -83,7 +90,7 @@ int is_fifo_write_ready(sim_t *s)
 	int status = 0;
 
 	s->sample_length = get_sample_length(s);
-	if (s->sample_length < NUM_IQ_SAMPLES)
+	if (s->sample_length < num_iq_samples)
 		status = 1;
 
 	return(status);
@@ -98,8 +105,9 @@ void *tx_task(void *arg)
 		int16_t *tx_buffer_current = s->tx.buffer;
 		unsigned int buffer_samples_remaining = SAMPLES_PER_BUFFER;
 
+		// FIXME: maybe unint doesn't work in this equation
 		while (buffer_samples_remaining > 0) {
-			
+
 			pthread_mutex_lock(&(s->gps.lock));
 			while (get_sample_length(s) == 0)
 			{
@@ -133,6 +141,7 @@ void *tx_task(void *arg)
 
 		// If there were no errors, transmit the data buffer.
 		bladerf_sync_tx(s->tx.dev, s->tx.buffer, SAMPLES_PER_BUFFER, NULL, TIMEOUT_MS);
+		// TODO: what is this if sentence for?
 		if (is_fifo_write_ready(s)) {
 			/*
 			printf("\rTime = %4.1f", s->time);
@@ -185,34 +194,61 @@ void usage(void)
 		"  -i               Interactive mode: North='%c', South='%c', East='%c', West='%c'\n"
 		"  -I               Disable ionospheric delay for spacecraft scenario\n"
 		"  -p               Disable path loss and hold power level constant\n",
-		((double)USER_MOTION_SIZE)/10.0, 
+		((double)USER_MOTION_SIZE)/10.0,
 		TX_GAIN,
 		NORTH_KEY, SOUTH_KEY, EAST_KEY, WEST_KEY);
 
 	return;
 }
 
-int main(int argc, char *argv[])
+#define bladegps_version_helper(x) #x
+#define bladegps_version(x) bladegps_version_helper(x)
+
+static void bladegps_opening()
 {
-	sim_t s;
+	printf("\nbladeGPS is now starting. commit=%.8s (%s)\n", bladegps_version(GIT_COMMIT_ID) +7, bladegps_version(GIT_COMMIT_DATE));
+}
+
+// sim_t *simp = NULL;
+// void bladeGPS_signal_handler(int sig)
+// {
+//     const bladerf_gain tx_mingain = -22;
+// 	// bladerf_set_gain(simp->tx.dev, BLADERF_CHANNEL_TX(0), tx_mingain);
+// 	bladerf_set_gain(simp->tx.dev, BLADERF_CHANNEL_TX(0), tx_mingain);
+// 	// printf("[AOWRTX] Set TX1 gain at the minimum level.\n");
+// 	eflag = 1;
+// }
+
+int bladegps_main(struct bladerf *dev, int argc, char *argv[])
+{
+	sim_t s = {0};
 	char *devstr = NULL;
-	int xb_board=0;
+	int xb_board = 0;
 
 	int result;
 	double duration;
 	datetime_t t0;
-	
+
 	const struct bladerf_range *range = NULL;
 	double min_gain;
 	double max_gain;
 	int tx_gain = TX_GAIN;
+	int rx_gain = RX_GAIN;
 	bladerf_channel tx_channel = BLADERF_CHANNEL_TX(0);
-	
+
 	if (argc<3)
 	{
 		usage();
 		exit(1);
 	}
+	bladegps_opening();
+
+	// if (signal(SIGINT, bladeGPS_signal_handler) == SIG_ERR &&
+	// 	signal(SIGTERM, bladeGPS_signal_handler) == SIG_ERR) {
+	// 	fprintf(stderr, "Failed to set up signal handler\n");
+	// 	exit(1);
+	// }
+	// simp = &s;
 	s.finished = false;
 
 	s.opt.navfile[0] = 0;
@@ -232,7 +268,7 @@ int main(int argc, char *argv[])
 	s.opt.iono_enable = TRUE;
 	s.opt.path_loss_enable = TRUE;
 
-	while ((result=getopt(argc,argv,"e:y:u:g:l:T:t:d:x:a:iIp"))!=-1)
+	while ((result=getopt(argc,argv,"e:y:u:g:l:T:t:d:x:a:A:iIp"))!=-1)
 	{
 		switch (result)
 		{
@@ -267,7 +303,7 @@ int main(int argc, char *argv[])
 			{
 				time_t timer;
 				struct tm *gmt;
-				
+
 				time(&timer);
 				gmt = gmtime(&timer);
 
@@ -307,8 +343,12 @@ int main(int argc, char *argv[])
 			break;
 		case 'a':
 			tx_gain = atoi(optarg);
+			// NOTE: probably not to break bladerf?
 			if (tx_gain>0)
 				tx_gain *= -1;
+			break;
+		case 'A':
+			rx_gain = atoi(optarg);
 			break;
 		case 'i':
 			s.opt.interactive = TRUE;
@@ -343,31 +383,48 @@ int main(int argc, char *argv[])
 
 	// Initialize simulator
 	init_sim(&s);
+	s.tx.dev = dev;
+	s.status = 0;
 
-	// Allocate TX buffer to hold each block of samples to transmit.
-	s.tx.buffer = (int16_t *)malloc(SAMPLES_PER_BUFFER * sizeof(int16_t) * 2); // for 16-bit I and Q samples
-	
-	if (s.tx.buffer == NULL) {
-		fprintf(stderr, "Failed to allocate TX buffer.\n");
+	// Get sample rate for buffer size.
+	s.status = bladerf_get_sample_rate(s.tx.dev, tx_channel, &tx_samplerate);
+	if (s.status != 0) {
+		fprintf(stderr, "Failed to get TX sample rate: %s\n", bladerf_strerror(s.status));
 		goto out;
 	}
+	else {
+		printf("TX sample rate: %u sps\n", tx_samplerate);
+	}
+
+	num_iq_samples = (tx_samplerate / 10);
+	fifo_length = (num_iq_samples * 2);
 
 	// Allocate FIFOs to hold 0.1 seconds of I/Q samples each.
-	s.fifo = (int16_t *)malloc(FIFO_LENGTH * sizeof(int16_t) * 2); // for 16-bit I and Q samples
+	s.fifo = (int16_t *)malloc(fifo_length * sizeof(int16_t) * 2); // for 16-bit I and Q samples
 
 	if (s.fifo == NULL) {
 		fprintf(stderr, "Failed to allocate I/Q sample buffer.\n");
 		goto out;
 	}
 
-	// Initializing device.
-	printf("Opening and initializing device...\n");
 
-	s.status = bladerf_open(&s.tx.dev, devstr);
-	if (s.status != 0) {
-		fprintf(stderr, "Failed to open device: %s\n", bladerf_strerror(s.status));
+	// Allocate TX buffer to hold each block of samples to transmit.
+	s.tx.buffer = (int16_t *)malloc(SAMPLES_PER_BUFFER * sizeof(int16_t) * 2); // for 16-bit I and Q samples
+
+	if (s.tx.buffer == NULL) {
+		fprintf(stderr, "Failed to allocate TX buffer.\n");
 		goto out;
 	}
+
+	// Initializing device.
+	printf("Initializing device...\n");
+	// printf("Opening and initializing device...\n");
+
+	// s.status = bladerf_open(&s.tx.dev, devstr);
+	// if (s.status != 0) {
+	// 	fprintf(stderr, "Failed to open device: %s\n", bladerf_strerror(s.status));
+	// 	goto out;
+	// }
 
 	if(xb_board == 200) {
 		printf("Initializing XB200 expansion board...\n");
@@ -413,19 +470,20 @@ int main(int argc, char *argv[])
 	if (s.status != 0) {
 		fprintf(stderr, "Faield to set TX frequency: %s\n", bladerf_strerror(s.status));
 		goto out;
-	} 
+	}
 	else {
 		printf("TX frequency: %u Hz\n", TX_FREQUENCY);
 	}
 
-	s.status = bladerf_set_sample_rate(s.tx.dev, tx_channel, TX_SAMPLERATE, NULL);
-	if (s.status != 0) {
-		fprintf(stderr, "Failed to set TX sample rate: %s\n", bladerf_strerror(s.status));
-		goto out;
-	}
-	else {
-		printf("TX sample rate: %u sps\n", TX_SAMPLERATE);
-	}
+	// Not set sample rate here, use same value as the receiver.
+	// s.status = bladerf_set_sample_rate(s.tx.dev, tx_channel, TX_SAMPLERATE, NULL);
+	// if (s.status != 0) {
+	// 	fprintf(stderr, "Failed to set TX sample rate: %s\n", bladerf_strerror(s.status));
+	// 	goto out;
+	// }
+	// else {
+	// 	printf("TX sample rate: %u sps\n", TX_SAMPLERATE);
+	// }
 
 	s.status = bladerf_set_bandwidth(s.tx.dev, tx_channel, TX_BANDWIDTH, NULL);
 	if (s.status != 0) {
@@ -435,21 +493,21 @@ int main(int argc, char *argv[])
 	else {
 		printf("TX bandwidth: %u Hz\n", TX_BANDWIDTH);
 	}
-	
-    	s.status = bladerf_get_gain_range(s.tx.dev, tx_channel, &range);
-    	if (s.status != 0) {
-		fprintf(stderr, "Failed to check gain range: %s\n", bladerf_strerror(s.status));
-		goto out;
-    	}
-    	else {
-    		min_gain = range->min * range->scale;
-    		max_gain = range->max * range->scale;
-    		printf("TX gain range: [%g dB, %g dB] \n",min_gain, max_gain);
-    		if (tx_gain < min_gain)
-			tx_gain = min_gain;
-		else if (tx_gain > max_gain)
-			tx_gain = max_gain;
-    	}
+
+	s.status = bladerf_get_gain_range(s.tx.dev, tx_channel, &range);
+	if (s.status != 0) {
+	fprintf(stderr, "Failed to check gain range: %s\n", bladerf_strerror(s.status));
+	goto out;
+	}
+	else {
+		min_gain = range->min * range->scale;
+		max_gain = range->max * range->scale;
+		printf("TX gain range: [%g dB, %g dB] \n",min_gain, max_gain);
+		if (tx_gain < min_gain)
+		tx_gain = min_gain;
+	else if (tx_gain > max_gain)
+		tx_gain = max_gain;
+	}
 
 	s.status = bladerf_set_gain(s.tx.dev, tx_channel, tx_gain);
 	if (s.status != 0) {
@@ -457,7 +515,20 @@ int main(int argc, char *argv[])
 		goto out;
 	}
 	else {
-		printf("TX gain: %d dB\n", tx_gain);
+		int tx1_gain;
+		s.status = bladerf_get_gain(s.tx.dev, tx_channel, &tx1_gain);
+		printf("TX1 gain: %d dB\n", tx1_gain);
+	}
+
+	s.status = bladerf_set_gain(s.tx.dev, BLADERF_CHANNEL_TX(1), -22);
+	if (s.status != 0) {
+		fprintf(stderr, "Failed to set gain: %s\n", bladerf_strerror(s.status));
+		goto out;
+	}
+	else {
+		int tx2_gain;
+		s.status = bladerf_get_gain(s.tx.dev, BLADERF_CHANNEL_TX(1), &tx2_gain);
+		printf("TX2 gain: %d dB\n", tx2_gain);
 	}
 
 	// Start GPS task.
@@ -513,7 +584,7 @@ int main(int argc, char *argv[])
 	printf("Running...\n");
 	printf("Press 'q' to quit.\n");
 
-	// Wainting for TX task to complete.
+	// Waiting for TX task to complete.
 	pthread_join(s.tx.thread, NULL);
 	printf("\nDone!\n");
 
@@ -529,6 +600,8 @@ out:
 
 	if (s.fifo != NULL)
 		free(s.fifo);
+	bladerf_set_gain(s.tx.dev, BLADERF_CHANNEL_TX(0), -22);
+	printf("Set TX1 gain at minimum level.\n");
 
 	printf("Closing device...\n");
 	bladerf_close(s.tx.dev);

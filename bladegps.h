@@ -15,17 +15,19 @@
 #include "gpssim.h"
 
 #define TX_FREQUENCY	1575420000
-#define TX_SAMPLERATE	2600000
+// #define TX_SAMPLERATE	2600000
 #define TX_BANDWIDTH	2500000
 #define TX_GAIN		-5
+#define RX_GAIN		30
 
+// TODO: check if this parameter is okay.
 #define NUM_BUFFERS			32
 #define SAMPLES_PER_BUFFER	(32 * 1024)
 #define NUM_TRANSFERS		16
 #define TIMEOUT_MS			1000
 
-#define NUM_IQ_SAMPLES  (TX_SAMPLERATE / 10)
-#define FIFO_LENGTH     (NUM_IQ_SAMPLES * 2)
+// #define NUM_IQ_SAMPLES  (TX_SAMPLERATE / 10)
+// #define FIFO_LENGTH     (NUM_IQ_SAMPLES * 2)
 
 // Interactive mode directions
 #define UNDEF 0
@@ -45,6 +47,19 @@
 // Interactive motion
 #define MAX_VEL 2.7 // 2.77 m/s = 10 km/h
 #define DEL_VEL 0.2
+
+extern uint32_t tx_samplerate;
+extern uint32_t num_iq_samples;
+extern uint32_t fifo_length;
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+    __attribute__ ((visibility ("default"))) int bladegps_main(
+		struct bladerf *dev, int argc, char *argv[]);
+#ifdef __cplusplus
+}
+#endif
 
 typedef struct {
 	char navfile[MAX_CHAR];
