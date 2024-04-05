@@ -1831,7 +1831,7 @@ int generateNavMsg(gpstime_t g, channel_t *chan, int init)
 	return(1);
 }
 
-int checkSatVisibility(ephem_t eph, gpstime_t g, double *xyz, double *azel, double *ant_dir)
+int checkSatVisibility(ephem_t eph, gpstime_t g, double *xyz, double *azel)
 {
 	// FIXME: for ECI.
 	double llh[3],neu[3];
@@ -1888,7 +1888,7 @@ int allocateChannel(channel_t *chan, ephem_t *eph, ionoutc_t ionoutc, almanac_t 
 	// Allocate channel
 	for (sv=0; sv<MAX_SAT; sv++)
 	{
-		if(checkSatVisibility(eph[sv], grx, xyz, azel, ant_dir)==1)
+		if(checkSatVisibility(eph[sv], grx, xyz, azel)==1)
 		{
 			nsat++; // Number of visible satellites
 
