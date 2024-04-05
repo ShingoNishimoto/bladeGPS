@@ -260,15 +260,17 @@ int bladegps_main(struct bladerf *dev, int argc, char *argv[])
 	s.opt.verb = TRUE;
 	s.opt.nmeaGGA = FALSE;
 	s.opt.staticLocationMode = TRUE; // default user motion
-	s.opt.llh[0] = 40.7850916 / R2D;
-	s.opt.llh[1] = -73.968285 / R2D;
+	s.opt.llh[0] = 40.7850916 * D2R;
+	s.opt.llh[1] = -73.968285 * D2R;
 	s.opt.llh[2] = 100.0;
 	s.opt.interactive = FALSE;
 	s.opt.timeoverwrite = FALSE;
 	s.opt.iono_enable = TRUE;
 	s.opt.path_loss_enable = TRUE;
+	s.opt.rec_ant_dir[0] = 0.0;
+	s.opt.rec_ant_dir[0] = 90.0 *D2R;
 
-	while ((result=getopt(argc,argv,"e:y:u:g:l:T:t:d:x:a:A:iIp"))!=-1)
+	while ((result=getopt(argc,argv,"e:y:u:g:l:T:t:d:x:a:A:r:iIp"))!=-1)
 	{
 		switch (result)
 		{
@@ -294,8 +296,8 @@ int bladegps_main(struct bladerf *dev, int argc, char *argv[])
 			s.opt.nmeaGGA = FALSE;
 			s.opt.staticLocationMode = TRUE;
 			sscanf(optarg,"%lf,%lf,%lf",&s.opt.llh[0],&s.opt.llh[1],&s.opt.llh[2]);
-			s.opt.llh[0] /= R2D; // convert to RAD
-			s.opt.llh[1] /= R2D; // convert to RAD
+			s.opt.llh[0] *= D2R; // convert to RAD
+			s.opt.llh[1] *= D2R; // convert to RAD
 			break;
 		case 'T':
 			s.opt.timeoverwrite = TRUE;
@@ -349,6 +351,11 @@ int bladegps_main(struct bladerf *dev, int argc, char *argv[])
 			break;
 		case 'A':
 			rx_gain = atoi(optarg);
+			break;
+		case 'r':
+			sscanf(optarg,"%lf,%lf",&s.opt.rec_ant_dir[0],&s.opt.rec_ant_dir[1]);
+			s.opt.rec_ant_dir[0] *= D2R; // convert to RAD
+			s.opt.rec_ant_dir[1] *= D2R; // convert to RAD
 			break;
 		case 'i':
 			s.opt.interactive = TRUE;

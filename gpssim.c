@@ -352,7 +352,7 @@ void ltcmat(const double *llh, double t[3][3])
 	return;
 }
 
-/*! \brief Convert Earth-centered Earth-Fixed to ?
+/*! \brief Convert Earth-centered Earth-Fixed to North-East-Up
  *  \param[in] xyz Input position as vector in ECEF format
  *  \param[in] t Intermediate matrix computed by \ref ltcmat
  *  \param[out] neu Output position as North-East-Up format
@@ -362,6 +362,25 @@ void ecef2neu(const double *xyz, double t[3][3], double *neu)
 	neu[0] = t[0][0]*xyz[0] + t[0][1]*xyz[1] + t[0][2]*xyz[2];
 	neu[1] = t[1][0]*xyz[0] + t[1][1]*xyz[1] + t[1][2]*xyz[2];
 	neu[2] = t[2][0]*xyz[0] + t[2][1]*xyz[1] + t[2][2]*xyz[2];
+
+	return;
+}
+
+/*! \brief Convert North-East-Up to Antenna-fixed North-East-Up
+ *  \param[in] neu Input vector in North-East-Up format
+ *  \param[in] ant_dir Input antenna direction in Azimuth and Elevation
+ *  \param[out] neu_ant Output vector in Antenna-fixed NEU format
+ */
+void neu2ant(const double *neu, const double *ant_dir, double *neu_ant)
+{
+	double cos_az = cos(ant_dir[0]);
+	double sin_az = sin(ant_dir[0]);
+	double cos_el = cos(ant_dir[1]);
+	double sin_el = sin(ant_dir[1]);
+
+	neu_ant[0] = sin_el*cos_az*neu[0] -sin_az*neu[1] + cos_el*cos_az*neu[2];
+	neu_ant[1] = sin_el*sin_az*neu[0] + cos_az*neu[1] + cos_el*sin_az*neu[2];
+	neu_ant[2] = -cos_el*neu[0] + sin_el*neu[2];
 
 	return;
 }
@@ -379,7 +398,7 @@ void neu2azel(double *azel, const double *neu)
 		azel[0] += (2.0*PI);
 
 	ne = sqrt(neu[0]*neu[0] + neu[1]*neu[1]);
-	azel[1] = atan2(neu[2], ne);
+	azel[1] = atan(neu[2] / ne);
 
 	return;
 }
@@ -1407,6 +1426,7 @@ int readRinexNavAll(ephem_t eph[][MAX_SAT], ionoutc_t *ionoutc, const char *fnam
 	return(ieph);
 }
 
+// FIXME: for beyond GPS orbit
 double ionosphericDelay(const ionoutc_t *ionoutc, gpstime_t g, double *llh, double *azel)
 {
 	double iono_delay = 0.0;
@@ -1489,8 +1509,11 @@ double ionosphericDelay(const ionoutc_t *ionoutc, gpstime_t g, double *llh, doub
  *  \param[in] eph Ephemeris data of the satellite
  *  \param[in] g GPS time at time of receiving the signal
  *  \param[in] xyz position of the receiver
+ *  \param[in] ant_dir receiver antenna direction
+ *  \param[in] elvMask elevation mask angle [deg]
+ *  \return bool whether the result is valuable or not
  */
-void computeRange(range_t *rho, ephem_t eph, ionoutc_t *ionoutc, gpstime_t g, double xyz[])
+bool computeRange(range_t *rho, ephem_t eph, ionoutc_t *ionoutc, gpstime_t g, double xyz[], const double* ant_dir, const double elvMask)
 {
 	double pos[3],vel[3],clk[2];
 	double los[3];
@@ -1498,7 +1521,7 @@ void computeRange(range_t *rho, ephem_t eph, ionoutc_t *ionoutc, gpstime_t g, do
 	double range,rate;
 	double xrot,yrot;
 
-	double llh[3],neu[3];
+	double llh[3],neu[3], neu_ant[3], azel[2];
 	double tmat[3][3];
 
 	// SV position at time of the pseudorange observation.
@@ -1519,8 +1542,21 @@ void computeRange(range_t *rho, ephem_t eph, ionoutc_t *ionoutc, gpstime_t g, do
 	pos[0] = xrot;
 	pos[1] = yrot;
 
-	// New observer to satellite vector and satellite range.
+	// Update los vector
 	subVect(los, pos, xyz);
+
+	// Azimuth and elevation angles. TODO: which los should be used?
+	xyz2llh(xyz, llh);
+	ltcmat(llh, tmat);
+	ecef2neu(los, tmat, neu);
+	neu2ant(neu, ant_dir, neu_ant);
+	neu2azel(azel, neu_ant);
+	// Eliminate sats under the mask angle
+	if (azel[1] * R2D < elvMask) return false;
+
+	rho->azel[0] = azel[0]; rho->azel[1] = azel[1];
+
+	// New observer to satellite vector and satellite range.
 	range = normVect(los);
 	rho->d = range;
 
@@ -1536,17 +1572,11 @@ void computeRange(range_t *rho, ephem_t eph, ionoutc_t *ionoutc, gpstime_t g, do
 	// Time of application.
 	rho->g = g;
 
-	// Azimuth and elevation angles.
-	xyz2llh(xyz, llh);
-	ltcmat(llh, tmat);
-	ecef2neu(los, tmat, neu);
-	neu2azel(rho->azel, neu);
-
 	// Add ionospheric delay
 	rho->iono_delay = ionosphericDelay(ionoutc, g, llh, rho->azel);
 	rho->range += rho->iono_delay;
 
-	return;
+	return true;
 }
 
 /*! \brief Compute the code phase for a given channel (satellite)
@@ -1801,36 +1831,44 @@ int generateNavMsg(gpstime_t g, channel_t *chan, int init)
 	return(1);
 }
 
-int checkSatVisibility(ephem_t eph, gpstime_t g, double *xyz, double elvMask, double *azel)
+int checkSatVisibility(ephem_t eph, gpstime_t g, double *xyz, double *azel, double *ant_dir)
 {
+	// FIXME: for ECI.
 	double llh[3],neu[3];
 	double pos[3],vel[3],clk[3],los[3];
 	double tmat[3][3];
+	double el_earth_edge;
 
-	if (eph.vflg != 1)
+        if (eph.vflg != 1)
 		return (-1); // Invalid
 
 	xyz2llh(xyz,llh);
+	el_earth_edge = -(0.5 * PI - asin(RADIUS_EARTH / (RADIUS_EARTH + llh[2])));
 	ltcmat(llh, tmat);
 
 	satpos(eph, g, pos, vel, clk);
 	subVect(los, pos, xyz);
+	// check satellite direction
+	double dot_prod_pos_los = dotProd(pos, los);
+	if (dot_prod_pos_los < 0) return 0; // Invisible
+
 	ecef2neu(los, tmat, neu);
 	neu2azel(azel, neu);
 
-	if (azel[1]*R2D > elvMask)
+	// if (azel[1]*R2D > elvMask)
+	if (azel[1] > el_earth_edge) // Check only geometric visibility
 		return (1); // Visible
 	// else
 	return (0); // Invisible
 }
 
-int allocateChannel(channel_t *chan, ephem_t *eph, ionoutc_t ionoutc, almanac_t *alm, gpstime_t grx, double *xyz, double elvMask)
+int allocateChannel(channel_t *chan, ephem_t *eph, ionoutc_t ionoutc, almanac_t *alm, gpstime_t grx, double *xyz, double* ant_dir, double elvMask)
 {
 	int nsat=0;
 	int i,sv;
 	double azel[2];
 
-	range_t rho;
+	range_t rho = {0};
 	double ref[3]={0.0};
 	double r_ref,r_xyz;
 	double phase_ini;
@@ -1850,7 +1888,7 @@ int allocateChannel(channel_t *chan, ephem_t *eph, ionoutc_t ionoutc, almanac_t 
 	// Allocate channel
 	for (sv=0; sv<MAX_SAT; sv++)
 	{
-		if(checkSatVisibility(eph[sv], grx, xyz, 0.0, azel)==1)
+		if(checkSatVisibility(eph[sv], grx, xyz, azel, ant_dir)==1)
 		{
 			nsat++; // Number of visible satellites
 
@@ -1861,6 +1899,13 @@ int allocateChannel(channel_t *chan, ephem_t *eph, ionoutc_t ionoutc, almanac_t 
 				{
 					if (chan[i].prn==0)
 					{
+						if (!computeRange(&rho, eph[sv], &ionoutc, grx, xyz, ant_dir, elvMask)) continue;
+
+						// Initialize pseudorange
+						chan[i].rho0 = rho;
+						// Initialize carrier phase
+						r_xyz = rho.range;
+
 						// Initialize channel
 						chan[i].prn = sv+1;
 						chan[i].ipage = ipage;
@@ -1876,14 +1921,7 @@ int allocateChannel(channel_t *chan, ephem_t *eph, ionoutc_t ionoutc, almanac_t 
 						// Generate navigation message
 						generateNavMsg(grx, &chan[i], 1);
 
-						// Initialize pseudorange
-						computeRange(&rho, eph[sv], &ionoutc, grx, xyz);
-						chan[i].rho0 = rho;
-
-						// Initialize carrier phase
-						r_xyz = rho.range;
-
-						computeRange(&rho, eph[sv], &ionoutc, grx, ref);
+						computeRange(&rho, eph[sv], &ionoutc, grx, ref, ant_dir, elvMask);
 						r_ref = rho.range;
 
 						phase_ini = (2.0*r_ref - r_xyz)/LAMBDA_L1;
@@ -1910,7 +1948,7 @@ int allocateChannel(channel_t *chan, ephem_t *eph, ionoutc_t ionoutc, almanac_t 
 		}
 	}
 
-	return(nsat);
+	return(nsat); // isn't used now.
 }
 
 #ifndef _WIN32
@@ -2000,6 +2038,7 @@ void *gps_task(void *arg)
 	double ant_gain;
 	int ibs; // boresight angle index
 
+	double ant_dir[2];
 	double ant_pat[37];
 
 	datetime_t t0,tmin,tmax;
@@ -2038,6 +2077,9 @@ void *gps_task(void *arg)
 	llh[0] = s->opt.llh[0];
 	llh[1] = s->opt.llh[1];
 	llh[2] = s->opt.llh[2];
+
+	ant_dir[0] = s->opt.rec_ant_dir[0];
+	ant_dir[1] = s->opt.rec_ant_dir[1];
 
 	g0.week = s->opt.g0.week;
 	g0.sec = s->opt.g0.sec;
@@ -2343,7 +2385,7 @@ void *gps_task(void *arg)
 	grx = incGpsTime(g0, 0.0);
 
 	// Allocate visible satellites
-	allocateChannel(chan, eph[ieph], ionoutc, alm, grx, xyz[0], elvmask);
+	allocateChannel(chan, eph[ieph], ionoutc, alm, grx, xyz[0], ant_dir, elvmask);
 
 	for(i=0; i<MAX_CHAN; i++)
 	{
@@ -2464,7 +2506,7 @@ void *gps_task(void *arg)
 				sv = chan[i].prn-1;
 
 				// Current pseudorange
-				computeRange(&rho, eph[ieph][sv], &ionoutc, grx, xyz[iumd]);
+				bool valid = computeRange(&rho, eph[ieph][sv], &ionoutc, grx, xyz[iumd], ant_dir, elvmask);
 				chan[i].azel[0] = rho.azel[0];
 				chan[i].azel[1] = rho.azel[1];
 
@@ -2473,7 +2515,7 @@ void *gps_task(void *arg)
 				chan[i].carr_phasestep = (int)(512 * 65536.0 * chan[i].f_carr * delt);
 
 				// Path loss
-				path_loss = 20200000.0/rho.d;
+				path_loss = 20200000.0/rho.d; // FIXME: wrong. should be square.
 
 				// Receiver antenna gain
 				ibs = (int)((90.0-rho.azel[1]*R2D)/5.0); // covert elevation to boresight
@@ -2615,7 +2657,7 @@ void *gps_task(void *arg)
 			}
 
 			// Update channel allocation
-			allocateChannel(chan, eph[ieph], ionoutc, alm, grx, xyz[iumd], elvmask);
+			allocateChannel(chan, eph[ieph], ionoutc, alm, grx, xyz[iumd], ant_dir, elvmask);
 
 			// Show ditails about simulated channels
 			if (verb)

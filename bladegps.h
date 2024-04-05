@@ -75,6 +75,7 @@ typedef struct {
 	int timeoverwrite;
 	int iono_enable;
 	int path_loss_enable;
+	double rec_ant_dir[2]; // azimuth, elevation in llh.
 } option_t;
 
 typedef struct {
