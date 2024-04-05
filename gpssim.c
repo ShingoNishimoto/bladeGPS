@@ -1843,7 +1843,15 @@ int checkSatVisibility(ephem_t eph, gpstime_t g, double *xyz, double *azel)
 		return (-1); // Invalid
 
 	xyz2llh(xyz,llh);
-	el_earth_edge = -(0.5 * PI - asin(RADIUS_EARTH / (RADIUS_EARTH + llh[2])));
+	if (llh[2] > 0)
+	{
+		el_earth_edge = -(0.5 * PI - asin(RADIUS_EARTH /(RADIUS_EARTH + llh[2])));
+	}
+	else
+	{
+		// FIXME: for negative altitude?
+		el_earth_edge = 0;
+	}
 	ltcmat(llh, tmat);
 
 	satpos(eph, g, pos, vel, clk);
