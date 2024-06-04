@@ -167,6 +167,15 @@ typedef struct
 	int dtlsf,dn,wnlsf;
 } ionoutc_t;
 
+typedef struct environment
+{
+    gpstime_t *g;
+    ephem_t eph[EPHEM_ARRAY_SIZE][MAX_SAT];
+    almanac_t alm[MAX_SAT];
+    ionoutc_t ionoutc;
+} env_t;
+
+
 typedef struct
 {
 	gpstime_t g;

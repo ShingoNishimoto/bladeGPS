@@ -186,16 +186,20 @@ void usage(void)
 		"  -u <user_motion> User motion file (dynamic mode)\n"
 		"  -g <nmea_gga>    NMEA GGA stream (dynamic mode)\n"
 		"  -l <location>    Lat,Lon,Hgt (static mode) e.g. 35.274,137.014,100\n"
+		"  -L <location>    Lat,Lon,Hgt (static mode) of Ch2 e.g. 35.274,137.014,100\n"
 		"  -t <date,time>   Scenario start time YYYY/MM/DD,hh:mm:ss\n"
 		"  -T <date,time>   Overwrite TOC and TOE to scenario start time\n"
 		"  -d <duration>    Duration [sec] (max: %.0f)\n"
 		"  -x <XB number>   Enable XB board, e.g. '-x 200' for XB200\n"
 		"  -a <tx_gain>     TX Gain (default: %d)\n"
+		"  -A <rx_gain>     RX Gain (default: %d)\n"
+		"  -r <azi,ele>     Rx antenna attitude in degree (default: azi=0, ele=90)\n"
+		"  -R <azi,ele>     Rx antenna attitude in degree of Ch2 (default: same as Ch1)\n"
 		"  -i               Interactive mode: North='%c', South='%c', East='%c', West='%c'\n"
 		"  -I               Disable ionospheric delay for spacecraft scenario\n"
 		"  -p               Disable path loss and hold power level constant\n",
 		((double)USER_MOTION_SIZE)/10.0,
-		TX_GAIN,
+		TX_GAIN, RX_GAIN,
 		NORTH_KEY, SOUTH_KEY, EAST_KEY, WEST_KEY);
 
 	return;
@@ -269,8 +273,10 @@ int bladegps_main(struct bladerf *dev, int argc, char *argv[])
 	s.opt.path_loss_enable = TRUE;
 	s.opt.rec_ant_dir[0] = 0.0;
 	s.opt.rec_ant_dir[0] = 90.0 *D2R;
+	option_t opt2 = s.opt;
+	s.ch2_enable = false;
 
-	while ((result=getopt(argc,argv,"e:y:u:g:l:T:t:d:x:a:A:r:iIp"))!=-1)
+	while ((result=getopt(argc,argv,":e:y:u:g:l:L:T:t:d:x:a:A:r:iIp"))!=-1)
 	{
 		switch (result)
 		{
@@ -298,6 +304,15 @@ int bladegps_main(struct bladerf *dev, int argc, char *argv[])
 			sscanf(optarg,"%lf,%lf,%lf",&s.opt.llh[0],&s.opt.llh[1],&s.opt.llh[2]);
 			s.opt.llh[0] *= D2R; // convert to RAD
 			s.opt.llh[1] *= D2R; // convert to RAD
+			break;
+		case 'L':
+			// Static geodetic coordinates input mode in ch2
+			s.ch2_enable = true;
+			opt2.nmeaGGA = FALSE;
+			opt2.staticLocationMode = TRUE;
+			sscanf(optarg,"%lf,%lf,%lf",&opt2.llh[0],&opt2.llh[1],&opt2.llh[2]);
+			opt2.llh[0] *= D2R; // convert to RAD
+			opt2.llh[1] *= D2R; // convert to RAD
 			break;
 		case 'T':
 			s.opt.timeoverwrite = TRUE;
@@ -357,6 +372,12 @@ int bladegps_main(struct bladerf *dev, int argc, char *argv[])
 			s.opt.rec_ant_dir[0] *= D2R; // convert to RAD
 			s.opt.rec_ant_dir[1] *= D2R; // convert to RAD
 			break;
+		case 'R':
+			s.ch2_enable = true;
+			sscanf(optarg,"%lf,%lf",&opt2.rec_ant_dir[0],&opt2.rec_ant_dir[1]);
+			opt2.rec_ant_dir[0] *= D2R; // convert to RAD
+			opt2.rec_ant_dir[1] *= D2R; // convert to RAD
+			break;
 		case 'i':
 			s.opt.interactive = TRUE;
 			break;
@@ -367,7 +388,11 @@ int bladegps_main(struct bladerf *dev, int argc, char *argv[])
 			s.opt.path_loss_enable = FALSE; // Disable path loss
 			break;
 		case ':':
+			printf("option needs a value\n");
+			usage();
+			exit(1);
 		case '?':
+			printf("unknown option: %c\n", optopt);
 			usage();
 			exit(1);
 		default:
@@ -386,6 +411,11 @@ int bladegps_main(struct bladerf *dev, int argc, char *argv[])
 		printf("ERROR: User motion file / NMEA GGA stream is not specified.\n");
 		printf("You may use -l to specify the static location directly.\n");
 		exit(1);
+	}
+
+	if (s.ch2_enable)
+	{
+		s.opt2 = opt2;
 	}
 
 	// Initialize simulator

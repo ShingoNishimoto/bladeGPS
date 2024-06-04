@@ -98,6 +98,8 @@ typedef struct {
 
 typedef struct {
 	option_t opt;
+	option_t opt2;
+	bool ch2_enable;
 
 	tx_t tx;
 	gps_t gps;
