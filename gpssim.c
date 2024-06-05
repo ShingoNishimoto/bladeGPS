@@ -1740,6 +1740,12 @@ int readNmeaGGA(double **xyz, const char *filename)
 	return (numd);
 }
 
+/*! \brief Generate navigation message */
+/*  \param[in] g Const receiver time in gps time
+ *  \param[out] chan pointer of receiver channel
+ *  \param[in] init flag indicating initialize or not
+ *  \returns success (1), fail (0)
+ */
 int generateNavMsg(const gpstime_t g, channel_t *chan, int init)
 {
 	int iwrd,isbf;
@@ -1983,10 +1989,10 @@ int allocateChannel(channel_t *chan, int *allocatedSat, const ephem_t* eph, cons
 	return(nsat); // isn't used now.
 }
 
-/*! \brief Set receiver potision array "xyz" and return the size of simulation "numd". */
+/*! \brief Set receiver position array "xyz" and return the size of simulation "numd". */
 /*  \param[out] xyz Array of user motion in ECEF frame
  *  \param[in] opt Pointer of the option_t
- *  \returns Number of simulration length
+ *  \returns Number of simulation length
  */
 int setReceiverPosition(double** xyz, const option_t* opt)
 {
@@ -2000,7 +2006,7 @@ int setReceiverPosition(double** xyz, const option_t* opt)
             for (int j = i - 1; j >= 0; j--)
                 free(xyz[i]);
 
-            printf("ERROR: Faild to allocate user motion array.\n");
+            printf("ERROR: Failed to allocate user motion array.\n");
             return -1;
         }
     }
@@ -2041,12 +2047,31 @@ int setReceiverPosition(double** xyz, const option_t* opt)
             xyz[iumd][2] = xyz[0][2];
         }
     }
-// TODO: better to resize xyz array according to the iduration
+    // TODO: better to resize xyz array according to the iduration
 
     printf("xyz = %11.1f, %11.1f, %11.1f\n", xyz[0][0], xyz[0][1], xyz[0][2]);
     printf("llh = %11.6f, %11.6f, %11.1f\n", opt->llh[0]*R2D, opt->llh[1]*R2D, opt->llh[2]);
 
     return numd;
+}
+
+/*! \brief print the debug message about channel */
+/*  \param[in] chan Array of receiver channels
+ *  \param[in] xyz Array of user position
+ */
+void printChannelInformation(const channel_t *chan, const double *xyz)
+{
+    double llh[3];
+    printf("xyz = %11.1f, %11.1f, %11.1f\n", xyz[0], xyz[1], xyz[2]);
+    xyz2llh(xyz, llh);
+    printf("llh = %11.6f, %11.6f, %11.1f\n", llh[0]*R2D, llh[1]*R2D, llh[2]);
+    int i;
+    for (i = 0; i < MAX_CHAN; i++)
+    {
+        if (chan[i].prn > 0)
+            printf("%02d %6.1f %5.1f %11.1f %5.1f\n", chan[i].prn,
+                chan[i].azel[0] * R2D, chan[i].azel[1] * R2D, chan[i].rho0.d, chan[i].rho0.iono_delay);
+    }
 }
 
 /*! \brief Initialize receiver channel and allocatedSat */
@@ -2074,12 +2099,7 @@ void initializeChannel(channel_t* chan, int* allocatedSat, const ephem_t *eph, c
 	// Allocate visible satellites
 	allocateChannel(chan, allocatedSat, eph, env, xyz, ant_dir, elvmask);
 
-	for(i = 0; i < MAX_CHAN; i++)
-	{
-		if (chan[i].prn>0)
-			printf("%02d %6.1f %5.1f %11.1f %5.1f\n", chan[i].prn,
-				chan[i].azel[0]*R2D, chan[i].azel[1]*R2D, chan[i].rho0.d, chan[i].rho0.iono_delay);
-	}
+    printChannelInformation(chan, xyz);
 }
 
 /*! \brief Compute receiver observation and gain */
@@ -2203,32 +2223,32 @@ void computeIQacc(int *iq_acc, channel_t * chan, const int* gain)
 #ifndef _WIN32
 void changemode(int dir)
 {
-  static struct termios oldt, newt;
+    static struct termios oldt, newt;
 
-  if ( dir == 1 )
-  {
-    tcgetattr( STDIN_FILENO, &oldt);
-    newt = oldt;
-    newt.c_lflag &= ~( ICANON | ECHO ); // non-canonical mode & no echo
-    tcsetattr( STDIN_FILENO, TCSANOW, &newt);
-  }
-  else
-    tcsetattr( STDIN_FILENO, TCSANOW, &oldt);
+    if ( dir == 1 )
+    {
+        tcgetattr( STDIN_FILENO, &oldt);
+        newt = oldt;
+        newt.c_lflag &= ~( ICANON | ECHO ); // non-canonical mode & no echo
+        tcsetattr( STDIN_FILENO, TCSANOW, &newt);
+    }
+    else
+        tcsetattr( STDIN_FILENO, TCSANOW, &oldt);
 }
 
 int _kbhit (void)
 {
-  struct timeval tv;
-  fd_set rdfs;
+    struct timeval tv;
+    fd_set rdfs;
 
-  tv.tv_sec = 0;
-  tv.tv_usec = 0;
+    tv.tv_sec = 0;
+    tv.tv_usec = 0;
 
-  FD_ZERO(&rdfs);
-  FD_SET (STDIN_FILENO, &rdfs);
+    FD_ZERO(&rdfs);
+    FD_SET (STDIN_FILENO, &rdfs);
 
-  select(STDIN_FILENO+1, &rdfs, NULL, NULL, &tv);
-  return FD_ISSET(STDIN_FILENO, &rdfs);
+    select(STDIN_FILENO+1, &rdfs, NULL, NULL, &tv);
+    return FD_ISSET(STDIN_FILENO, &rdfs);
 
 }
 
@@ -2254,8 +2274,6 @@ void *gps_task(void *arg)
 	int neph,ieph;
     env_t env;
 	gpstime_t g0;
-
-	double llh[3];
 
 	int i;
 	channel_t chan[MAX_CHAN], chan2[MAX_CHAN];
@@ -2283,7 +2301,6 @@ void *gps_task(void *arg)
 
 	int gain[MAX_CHAN], gain2[MAX_CHAN];
 
-	double ant_dir[2];
 	double ant_pat[37];
 
 	datetime_t t0,tmin,tmax;
@@ -2328,11 +2345,6 @@ void *gps_task(void *arg)
 
 	// independent options b/w ch
 	strcpy(umfile, s->opt.umfile);
-	llh[0] = s->opt.llh[0];
-	llh[1] = s->opt.llh[1];
-	llh[2] = s->opt.llh[2];
-	ant_dir[0] = s->opt.rec_ant_dir[0];
-	ant_dir[1] = s->opt.rec_ant_dir[1];
 	verb = s->opt.verb;
 
 	////////////////////////////////////////////////////////////
@@ -2721,7 +2733,6 @@ void *gps_task(void *arg)
 		// Write into FIFO
 		///////////////////////////////////////////////////////////
 
-        // TODO: from here.
 		if (!s->gps.ready) {
 			// Initialization has been done. Ready to create TX task.
 			printf("GPS signal generator is ready!\n");
@@ -2729,7 +2740,7 @@ void *gps_task(void *arg)
 			pthread_cond_signal(&(s->gps.initialization_done));
 		}
 
-		// Wait utill FIFO write is ready
+		// Wait until FIFO write is ready
 		pthread_mutex_lock(&(s->gps.lock));
 		while (!is_fifo_write_ready(s))
 			pthread_cond_wait(&(s->fifo_write_ready), &(s->gps.lock));
@@ -2754,9 +2765,15 @@ void *gps_task(void *arg)
 			// Update navigation message
 			for (i=0; i<MAX_CHAN; i++)
 			{
-				if (chan[i].prn>0)
-					generateNavMsg(grx, &chan[i], 0);
-			}
+                if (chan[i].prn > 0)
+                    generateNavMsg(grx, &chan[i], 0);
+
+                if (s->ch2_enable)
+                {
+                    if (chan2[i].prn > 0)
+                        generateNavMsg(grx, &chan2[i], 0);
+                }
+            }
 
 			// Refresh ephemeris and subframes
 			// Quick and dirty fix. Need more elegant way.
@@ -2772,8 +2789,13 @@ void *gps_task(void *arg)
 						for (i=0; i<MAX_CHAN; i++)
 						{
 							// Generate new subframes if allocated
-							if (chan[i].prn!=0)
+							if (chan[i].prn != 0)
 								eph2sbf(eph[ieph][chan[i].prn-1], ionoutc, env.alm, chan[i].sbf);
+                            if (s->ch2_enable)
+                            {
+                                if (chan2[i].prn != 0)
+                                    eph2sbf(eph[ieph][chan2[i].prn-1], ionoutc, env.alm, chan2[i].sbf);
+                            }
 						}
 					}
 
@@ -2782,26 +2804,31 @@ void *gps_task(void *arg)
 			}
 
 			// Update channel allocation
-			allocateChannel(chan, allocatedSat, eph[ieph], &env, xyz[iumd], ant_dir, elvmask);
+			allocateChannel(chan, allocatedSat, eph[ieph], &env, xyz[iumd], s->opt.rec_ant_dir, elvmask);
+            if (s->ch2_enable)
+            {
+                allocateChannel(chan2, allocatedSat2, eph[ieph], &env, xyz2[iumd], s->opt2.rec_ant_dir, elvmask);
+            }
 
-			// Show ditails about simulated channels
+			// Show details about simulated channels
 			if (verb)
 			{
 				printf("\n");
 				gps2date(&grx, &t0);
 				printf("%4d/%02d/%02d,%02d:%02d:%02.0f (%d:%.0f)\n",
 					t0.y, t0.m, t0.d, t0.hh, t0.mm, t0.sec, grx.week, grx.sec);
-				printf("xyz = %11.1f, %11.1f, %11.1f\n", xyz[iumd][0], xyz[iumd][1], xyz[iumd][2]);
-				xyz2llh(xyz[iumd],llh);
-				printf("llh = %11.6f, %11.6f, %11.1f\n", llh[0]*R2D, llh[1]*R2D, llh[2]);
-				for (i=0; i<MAX_CHAN; i++)
-				{
-					if (chan[i].prn>0)
-						printf("%02d %6.1f %5.1f %11.1f %5.1f\n", chan[i].prn,
-							chan[i].azel[0]*R2D, chan[i].azel[1]*R2D, chan[i].rho0.d, chan[i].rho0.iono_delay);
-				}
-			}
-		}
+                // channel 1
+                printf("channel 1\n");
+                printChannelInformation(chan, xyz[iumd]);
+
+                // channel 2
+                if (s->ch2_enable)
+                {
+                    printf("\nchannel 2\n");
+                    printChannelInformation(chan2, xyz2[iumd]);
+                }
+            }
+        }
 
 		// Update receiver time
 		grx = incGpsTime(grx, 0.1);
