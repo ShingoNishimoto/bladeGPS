@@ -102,7 +102,6 @@ double ant_pat_db[37] = {
 	31.56
 };
 
-int allocatedSat[MAX_SAT];
 
 /*! \brief Subtract two vectors of double
  *  \param[out] y Result of subtraction
@@ -408,9 +407,9 @@ void neu2azel(double *azel, const double *neu)
  *  \param[in] g GPS time at which position is to be computed
  *  \param[out] pos Computed position (vector)
  *  \param[out] vel Computed velociy (vector)
- *  \param[clk] clk Computed clock
+ *  \param[out] clk Computed clock
  */
-void satpos(ephem_t eph, gpstime_t g, double *pos, double *vel, double *clk)
+void satpos(const ephem_t eph, const gpstime_t g, double *pos, double *vel, double *clk)
 {
 	// Computing Satellite Velocity using the Broadcast Ephemeris
 	// http://www.ngs.noaa.gov/gps-toolbox/bc_velo.htm
@@ -519,6 +518,8 @@ void satpos(ephem_t eph, gpstime_t g, double *pos, double *vel, double *clk)
 
 /*! \brief Compute Subframe from Ephemeris
  *  \param[in] eph Ephemeris of given SV
+ *  \param[in] ionoutc ionosphere information
+ *  \param[in] alm almanac information
  *  \param[out] sbf Array of five sub-frames, 10 long words each
  */
 
@@ -1083,6 +1084,7 @@ int readAlmanac(almanac_t alm[MAX_SAT], const char *fname)
 
 /*! \brief Read Ephemersi data from the RINEX Navigation file */
 /*  \param[out] eph Array of Output SV ephemeris data
+ *  \param[out] ionoutc Pointer of ionosphere struct (ionoutc_t)
  *  \param[in] fname File name of the RINEX file
  *  \returns Number of sets of ephemerides in the file
  */
@@ -1506,14 +1508,15 @@ double ionosphericDelay(const ionoutc_t *ionoutc, gpstime_t g, double *llh, doub
 
 /*! \brief Compute range between a satellite and the receiver
  *  \param[out] rho The computed range
- *  \param[in] eph Ephemeris data of the satellite
+ *  \param[in] eph Const pointer of Ephemeris data of the satellite
+ *  \param[in] ionoutc Const pointer of Ionosphere structure
  *  \param[in] g GPS time at time of receiving the signal
  *  \param[in] xyz position of the receiver
  *  \param[in] ant_dir receiver antenna direction
  *  \param[in] elvMask elevation mask angle [deg]
- *  \return bool whether the result is valuable or not
+ *  \return bool whether the result is valid or not
  */
-bool computeRange(range_t *rho, ephem_t eph, ionoutc_t *ionoutc, gpstime_t g, double xyz[], const double* ant_dir, const double elvMask)
+bool computeRange(range_t *rho, const ephem_t *eph, const ionoutc_t *ionoutc, const gpstime_t g, const double xyz[], const double* ant_dir, const double elvMask)
 {
 	double pos[3],vel[3],clk[2];
 	double los[3];
@@ -1525,7 +1528,7 @@ bool computeRange(range_t *rho, ephem_t eph, ionoutc_t *ionoutc, gpstime_t g, do
 	double tmat[3][3];
 
 	// SV position at time of the pseudorange observation.
-	satpos(eph, g, pos, vel, clk);
+	satpos(*eph, g, pos, vel, clk);
 
 	// Receiver to satellite vector and light-time.
 	subVect(los, pos, xyz);
@@ -1580,9 +1583,9 @@ bool computeRange(range_t *rho, ephem_t eph, ionoutc_t *ionoutc, gpstime_t g, do
 }
 
 /*! \brief Compute the code phase for a given channel (satellite)
- *  \param chan Channel on which we operate (is updated)
+ *  \param[out] chan Channel on which we operate (is updated)
  *  \param[in] rho1 Current range, after \a dt has expired
- *  \param[in dt delta-t (time difference) in seconds
+ *  \param[in] dt delta-t (time difference) in seconds
  */
 void computeCodePhase(channel_t *chan, range_t rho1, double dt)
 {
@@ -1737,7 +1740,13 @@ int readNmeaGGA(double **xyz, const char *filename)
 	return (numd);
 }
 
-int generateNavMsg(gpstime_t g, channel_t *chan, int init)
+/*! \brief Generate navigation message */
+/*  \param[in] g Const receiver time in gps time
+ *  \param[out] chan pointer of receiver channel
+ *  \param[in] init flag indicating initialize or not
+ *  \returns success (1), fail (0)
+ */
+int generateNavMsg(const gpstime_t g, channel_t *chan, int init)
 {
 	int iwrd,isbf;
 	gpstime_t g0;
@@ -1831,7 +1840,14 @@ int generateNavMsg(gpstime_t g, channel_t *chan, int init)
 	return(1);
 }
 
-int checkSatVisibility(ephem_t eph, gpstime_t g, double *xyz, double *azel)
+/*! \brief Check satellite visibility */
+/*  \param[in] eph Const pointer of the ephemeris structure
+ *  \param[in] g Const pointer of Receiver time in gps time
+ *  \param[in] xyz Array of receiver position
+ *  \param[out] azel Array of satellite direction (Azimuth, Elevation)
+ *  \returns visible (1), invisible (0), or invalid (-1)
+ */
+int checkSatVisibility(const ephem_t *eph, const gpstime_t *g, const double *xyz, double *azel)
 {
 	// FIXME: for ECI.
 	double llh[3],neu[3];
@@ -1839,8 +1855,10 @@ int checkSatVisibility(ephem_t eph, gpstime_t g, double *xyz, double *azel)
 	double tmat[3][3];
 	double el_earth_edge;
 
-        if (eph.vflg != 1)
-		return (-1); // Invalid
+    if (eph->vflg != 1)
+    {
+        return (-1); // Invalid
+    }
 
 	xyz2llh(xyz,llh);
 	if (llh[2] > 0)
@@ -1854,7 +1872,7 @@ int checkSatVisibility(ephem_t eph, gpstime_t g, double *xyz, double *azel)
 	}
 	ltcmat(llh, tmat);
 
-	satpos(eph, g, pos, vel, clk);
+	satpos(*eph, *g, pos, vel, clk);
 	subVect(los, pos, xyz);
 	// check satellite direction
 	double dot_prod_pos_los = dotProd(pos, los);
@@ -1870,7 +1888,17 @@ int checkSatVisibility(ephem_t eph, gpstime_t g, double *xyz, double *azel)
 	return (0); // Invisible
 }
 
-int allocateChannel(channel_t *chan, ephem_t *eph, ionoutc_t ionoutc, almanac_t *alm, gpstime_t grx, double *xyz, double* ant_dir, double elvMask)
+/*! \brief Allocate visible satellites into each ch. */
+/*  \param[out] chan Array of receiver channel
+ *  \param[out] allocatedSat Array of ch information accodring to the satellite
+ *  \param[in] eph Array of the ephemeris structure
+ *  \param[in] env Const pointer of environment structure
+ *  \param[in] xyz Array of receiver position
+ *  \param[in] ant_dir Array of receiver antenna direction (azi, ele)
+ *  \param[in] elvMask elevation mask angle [deg]
+ *  \returns Number of GNSS satellites
+ */
+int allocateChannel(channel_t *chan, int *allocatedSat, const ephem_t* eph, const env_t *env, const double *xyz, const double* ant_dir, double elvMask)
 {
 	int nsat=0;
 	int i,sv;
@@ -1880,6 +1908,7 @@ int allocateChannel(channel_t *chan, ephem_t *eph, ionoutc_t ionoutc, almanac_t 
 	double ref[3]={0.0};
 	double r_ref,r_xyz;
 	double phase_ini;
+    const gpstime_t grx = *(env->g);
 
 	int ipage = 0; // Initial page count
 
@@ -1896,7 +1925,7 @@ int allocateChannel(channel_t *chan, ephem_t *eph, ionoutc_t ionoutc, almanac_t 
 	// Allocate channel
 	for (sv=0; sv<MAX_SAT; sv++)
 	{
-		if(checkSatVisibility(eph[sv], grx, xyz, azel)==1)
+		if(checkSatVisibility(&eph[sv], env->g, xyz, azel) == 1)
 		{
 			nsat++; // Number of visible satellites
 
@@ -1907,7 +1936,7 @@ int allocateChannel(channel_t *chan, ephem_t *eph, ionoutc_t ionoutc, almanac_t 
 				{
 					if (chan[i].prn==0)
 					{
-						if (!computeRange(&rho, eph[sv], &ionoutc, grx, xyz, ant_dir, elvMask)) continue;
+						if (!computeRange(&rho, &eph[sv], &(env->ionoutc), grx, xyz, ant_dir, elvMask)) continue;
 
 						// Initialize pseudorange
 						chan[i].rho0 = rho;
@@ -1924,12 +1953,12 @@ int allocateChannel(channel_t *chan, ephem_t *eph, ionoutc_t ionoutc, almanac_t 
 						codegen(chan[i].ca, chan[i].prn);
 
 						// Generate subframe
-						eph2sbf(eph[sv], ionoutc, alm, chan[i].sbf);
+						eph2sbf(eph[sv], env->ionoutc, env->alm, chan[i].sbf);
 
 						// Generate navigation message
 						generateNavMsg(grx, &chan[i], 1);
 
-						computeRange(&rho, eph[sv], &ionoutc, grx, ref, ant_dir, elvMask);
+						computeRange(&rho, &eph[sv], &(env->ionoutc), grx, ref, ant_dir, elvMask);
 						r_ref = rho.range;
 
 						phase_ini = (2.0*r_ref - r_xyz)/LAMBDA_L1;
@@ -1949,7 +1978,8 @@ int allocateChannel(channel_t *chan, ephem_t *eph, ionoutc_t ionoutc, almanac_t 
 		else if (allocatedSat[sv]>=0) // Not visible but allocated
 		{
 			// Clear channel
-			chan[allocatedSat[sv]].prn = 0;
+            channel_t ch_clear = {};
+			chan[allocatedSat[sv]] = ch_clear;
 
 			// Clear satellite allocation flag
 			allocatedSat[sv] = -1;
@@ -1959,35 +1989,266 @@ int allocateChannel(channel_t *chan, ephem_t *eph, ionoutc_t ionoutc, almanac_t 
 	return(nsat); // isn't used now.
 }
 
+/*! \brief Set receiver position array "xyz" and return the size of simulation "numd". */
+/*  \param[out] xyz Array of user motion in ECEF frame
+ *  \param[in] opt Pointer of the option_t
+ *  \returns Number of simulation length
+ */
+int setReceiverPosition(double** xyz, const option_t* opt)
+{
+    int numd;
+
+    for (int i = 0; i < USER_MOTION_SIZE; i++)
+    {
+        xyz[i] = (double *)malloc(3 * sizeof(double));
+        if (xyz[i] == NULL)
+        {
+            for (int j = i - 1; j >= 0; j--)
+                free(xyz[i]);
+
+            printf("ERROR: Failed to allocate user motion array.\n");
+            return -1;
+        }
+    }
+
+    if (!opt->staticLocationMode)
+    {
+        // Read user motion file
+        if (opt->nmeaGGA == true)
+            numd = readNmeaGGA(xyz, opt->umfile);
+        else
+        {
+            numd = readUserMotion(xyz, opt->umfile);
+        }
+
+        if (numd <= 0)
+        {
+            printf("ERROR: Failed to open user motion / NMEA GGA file.\n");
+            return -1;
+        }
+
+        // Set simulation duration
+        if (numd > opt->iduration)
+            numd = opt->iduration;
+    }
+    else
+    {
+        // Static geodetic coordinates input mode: "-l"
+        // Added by scateu@gmail.com
+        printf("Using static location mode.\n");
+        llh2xyz(opt->llh, xyz[0]); // Convert llh to xyz
+
+        numd = opt->iduration;
+
+        for (int iumd = 1; iumd < numd; iumd++)
+        {
+            xyz[iumd][0] = xyz[0][0];
+            xyz[iumd][1] = xyz[0][1];
+            xyz[iumd][2] = xyz[0][2];
+        }
+    }
+    // TODO: better to resize xyz array according to the iduration
+
+    printf("xyz = %11.1f, %11.1f, %11.1f\n", xyz[0][0], xyz[0][1], xyz[0][2]);
+    printf("llh = %11.6f, %11.6f, %11.1f\n", opt->llh[0]*R2D, opt->llh[1]*R2D, opt->llh[2]);
+
+    return numd;
+}
+
+/*! \brief print the debug message about channel */
+/*  \param[in] chan Array of receiver channels
+ *  \param[in] xyz Array of user position
+ */
+void printChannelInformation(const channel_t *chan, const double *xyz)
+{
+    double llh[3];
+    printf("xyz = %11.1f, %11.1f, %11.1f\n", xyz[0], xyz[1], xyz[2]);
+    xyz2llh(xyz, llh);
+    printf("llh = %11.6f, %11.6f, %11.1f\n", llh[0]*R2D, llh[1]*R2D, llh[2]);
+    int i;
+    for (i = 0; i < MAX_CHAN; i++)
+    {
+        if (chan[i].prn > 0)
+            printf("%02d %6.1f %5.1f %11.1f %5.1f\n", chan[i].prn,
+                chan[i].azel[0] * R2D, chan[i].azel[1] * R2D, chan[i].rho0.d, chan[i].rho0.iono_delay);
+    }
+}
+
+/*! \brief Initialize receiver channel and allocatedSat */
+/*  \param[out] chan Array of receiver channel
+ *  \param[out] allocatedSat Array of channel allocation information
+ *  \param[in] eph Const pointer to the corresponding ephemeris array
+ *  \param[in] env Const pointer to the env_t struct
+ *  \param[in] xyz Array of receiver position
+ *  \param[in] ant_dir Array of receiver antenna direction (azi, ele)
+ *  \param[in] elvMask elevation mask angle [deg]
+ */
+void initializeChannel(channel_t* chan, int* allocatedSat, const ephem_t *eph, const env_t *env, const double *xyz, const double* ant_dir, const double elvmask)
+{
+    // Clear all channels
+    int i;
+    for (i = 0; i < MAX_CHAN; i++)
+    {
+        chan[i].prn = 0;
+    }
+
+	// Clear satellite allocation flag
+	for (int sv = 0; sv < MAX_SAT; sv++)
+		allocatedSat[sv] = -1;
+
+	// Allocate visible satellites
+	allocateChannel(chan, allocatedSat, eph, env, xyz, ant_dir, elvmask);
+
+    printChannelInformation(chan, xyz);
+}
+
+/*! \brief Compute receiver observation and gain */
+/*  \param[out] chan Pointer of receiver channel
+ *  \param[out] gain Pointer of Rx antenna gain [dBi]
+ *  \param[in] eph Array of the corresponding ephemeris
+ *  \param[in] env Const pointer to the env_t struct
+ *  \param[in] xyz Array of receiver position
+ *  \param[in] opt Pointer of option
+ *  \param[in] ant_pat Array of receiver antenna pattern
+ *  \param[in] elvMask elevation mask angle [deg]
+ *  \returns valid(true) or not(false)
+ */
+bool computeObservation(channel_t* chan, int *gain, const ephem_t* eph, const env_t* env, const double* xyz, const option_t* opt, const double *ant_pat, const double elvmask)
+{
+    double delt = 1.0 / (double)tx_samplerate;
+    if (chan->prn>0)
+    {
+        // Refresh code phase and data bit counters
+        range_t rho;
+        int sv = chan->prn - 1;
+
+        // Compute current pseudorange
+        if (!computeRange(&rho, &eph[sv], &(env->ionoutc), *(env->g), xyz, opt->rec_ant_dir, elvmask))
+        {
+            channel_t ch_clear = {};
+            chan = &ch_clear;
+            // allocatedSat[sv] = -1;
+            return false;
+        }
+        chan->azel[0] = rho.azel[0];
+        chan->azel[1] = rho.azel[1];
+
+        // Update code phase and data bit counters
+        computeCodePhase(chan, rho, 0.1);
+        chan->carr_phasestep = (int)(512 * 65536.0 * chan->f_carr * delt);
+
+        // Path loss
+        double path_loss = 20200000.0/rho.d; // FIXME: wrong. should be square.
+
+        // Receiver antenna gain
+        int ibs = (int)((90.0-rho.azel[1]*R2D)/5.0); // covert elevation to boresight
+        double ant_gain = ant_pat[ibs];
+
+        // Signal gain
+        if (opt->path_loss_enable == TRUE)
+            *gain = (int)(path_loss * ant_gain * 128.0); // scaled by 2^7
+        else
+            *gain = 128; // hold the power level constant
+
+        return true;
+    }
+
+    return false;
+}
+
+/*! \brief Compute accumulated value of iq sampling */
+/*  \param[out] iq_acc Array of iq accumulation
+ *  \param[out] chan Array of receiver channels
+ *  \param[in] gain Array of receiver antenna gain
+ */
+void computeIQacc(int *iq_acc, channel_t * chan, const int* gain)
+{
+    double delt = 1.0 / (double)tx_samplerate;
+    int i;
+    for (i = 0; i < MAX_CHAN; i++)
+    {
+        if (chan[i].prn > 0)
+        {
+            int iTable = (chan[i].carr_phase >> 16) & 511;
+
+            int ip = chan[i].dataBit * chan[i].codeCA * cosTable512[iTable] * gain[i];
+            int qp = chan[i].dataBit * chan[i].codeCA * sinTable512[iTable] * gain[i];
+
+            // Accumulate for all visible satellites
+            iq_acc[0] += ip;
+            iq_acc[1] += qp;
+
+            // Update code phase
+            chan[i].code_phase += chan[i].f_code * delt;
+
+            if (chan[i].code_phase >= CA_SEQ_LEN)
+            {
+                chan[i].code_phase -= CA_SEQ_LEN;
+
+                chan[i].icode++;
+
+                if (chan[i].icode >= 20)  // 20 C/A codes = 1 navigation data bit
+                {
+                    chan[i].icode = 0;
+                    chan[i].ibit++;
+
+                    if (chan[i].ibit >= 30)  // 30 navigation data bits = 1 word
+                    {
+                        chan[i].ibit = 0;
+                        chan[i].iword++;
+                        /*
+                        if (chan[i].iword>=N_DWRD)
+                                printf("\nWARNING: Subframe word buffer overflow.\n");
+                        */
+                    }
+
+                    // Set new navigation data bit
+                    chan[i].dataBit = (int)((chan[i].dwrd[chan[i].iword] >> (29 - chan[i].ibit)) & 0x1UL) * 2 - 1;
+                }
+            }
+
+            // Set currnt code chip
+            chan[i].codeCA = chan[i].ca[(int)chan[i].code_phase] * 2 - 1;
+
+            // Update carrier phase
+            chan[i].carr_phase += chan[i].carr_phasestep;
+        }
+    }
+
+    // Scaled by 2^7
+    iq_acc[0] = (iq_acc[0] + 64) >> 7;
+    iq_acc[1] = (iq_acc[1] + 64) >> 7;
+}
+
 #ifndef _WIN32
 void changemode(int dir)
 {
-  static struct termios oldt, newt;
+    static struct termios oldt, newt;
 
-  if ( dir == 1 )
-  {
-    tcgetattr( STDIN_FILENO, &oldt);
-    newt = oldt;
-    newt.c_lflag &= ~( ICANON | ECHO ); // non-canonical mode & no echo
-    tcsetattr( STDIN_FILENO, TCSANOW, &newt);
-  }
-  else
-    tcsetattr( STDIN_FILENO, TCSANOW, &oldt);
+    if ( dir == 1 )
+    {
+        tcgetattr( STDIN_FILENO, &oldt);
+        newt = oldt;
+        newt.c_lflag &= ~( ICANON | ECHO ); // non-canonical mode & no echo
+        tcsetattr( STDIN_FILENO, TCSANOW, &newt);
+    }
+    else
+        tcsetattr( STDIN_FILENO, TCSANOW, &oldt);
 }
 
 int _kbhit (void)
 {
-  struct timeval tv;
-  fd_set rdfs;
+    struct timeval tv;
+    fd_set rdfs;
 
-  tv.tv_sec = 0;
-  tv.tv_usec = 0;
+    tv.tv_sec = 0;
+    tv.tv_usec = 0;
 
-  FD_ZERO(&rdfs);
-  FD_SET (STDIN_FILENO, &rdfs);
+    FD_ZERO(&rdfs);
+    FD_SET (STDIN_FILENO, &rdfs);
 
-  select(STDIN_FILENO+1, &rdfs, NULL, NULL, &tv);
-  return FD_ISSET(STDIN_FILENO, &rdfs);
+    select(STDIN_FILENO+1, &rdfs, NULL, NULL, &tv);
+    return FD_ISSET(STDIN_FILENO, &rdfs);
 
 }
 
@@ -2011,42 +2272,35 @@ void *gps_task(void *arg)
 
 	int sv;
 	int neph,ieph;
-	ephem_t eph[EPHEM_ARRAY_SIZE][MAX_SAT];
+    env_t env;
 	gpstime_t g0;
 
-	double llh[3];
+	int i;
+	channel_t chan[MAX_CHAN], chan2[MAX_CHAN];
+    int allocatedSat[MAX_SAT], allocatedSat2[MAX_SAT];
+	double elvmask = 0.0; // in degree TODO: make it be able to specify from option
 
-	int i,j;
-	channel_t chan[MAX_CHAN];
-	double elvmask = 0.0; // in degree
-
-	int ip,qp;
-	int iTable;
 	short *iq_buff = NULL;
 
 	gpstime_t grx;
-	double delt;
 	int isamp;
 
 	int iumd;
 	int numd;
 	char umfile[MAX_CHAR];
-	//double xyz[USER_MOTION_SIZE][3];
-	double **xyz;
-
-	int staticLocationMode = FALSE;
-	int nmeaGGA = FALSE;
+	// double xyz[USER_MOTION_SIZE][3], xyz2[USER_MOTION_SIZE][3];
+	double **xyz, **xyz2;
 
 	char navfile[MAX_CHAR];
 
-	int iq_buff_size;
+	int iq_buff_size = num_iq_samples;
+    if (s->ch2_enable)
+    {
+        iq_buff_size = 2 * num_iq_samples;
+    }
 
-	int gain[MAX_CHAN];
-	double path_loss;
-	double ant_gain;
-	int ibs; // boresight angle index
+	int gain[MAX_CHAN], gain2[MAX_CHAN];
 
-	double ant_dir[2];
 	double ant_pat[37];
 
 	datetime_t t0,tmin,tmax;
@@ -2059,10 +2313,7 @@ void *gps_task(void *arg)
 
 	int timeoverwrite = FALSE; // Overwirte the TOC and TOE in the RINEX file
 
-	ionoutc_t ionoutc;
-
 	char almfile[MAX_CHAR];
-	almanac_t alm[MAX_SAT];
 	int nalm;
 
 	int interactive = FALSE;
@@ -2077,125 +2328,74 @@ void *gps_task(void *arg)
 	// Read options
 	////////////////////////////////////////////////////////////
 
+	// common options
 	strcpy(navfile, s->opt.navfile);
-	strcpy(umfile, s->opt.umfile);
 	strcpy(almfile, s->opt.almfile);
-
-	staticLocationMode = s->opt.staticLocationMode;
-	llh[0] = s->opt.llh[0];
-	llh[1] = s->opt.llh[1];
-	llh[2] = s->opt.llh[2];
-
-	ant_dir[0] = s->opt.rec_ant_dir[0];
-	ant_dir[1] = s->opt.rec_ant_dir[1];
-
+	iduration = s->opt.iduration;
+	interactive = s->opt.interactive;
+	timeoverwrite = s->opt.timeoverwrite;
+	env.ionoutc.enable = s->opt.iono_enable;
 	g0.week = s->opt.g0.week;
 	g0.sec = s->opt.g0.sec;
+    env.g = &g0;
 	gps2date(&g0, &t0);
-
-	nmeaGGA = s->opt.nmeaGGA;
-
-	iduration = s->opt.iduration;
-	verb = s->opt.verb;
-
-	iq_buff_size = num_iq_samples;
-
-	delt = 1.0/(double)tx_samplerate;
-
-	interactive = s->opt.interactive;
-
-	timeoverwrite = s->opt.timeoverwrite;
-
-	ionoutc.enable = s->opt.iono_enable;
 
 	gmin = g0;
 	gmax = g0;
+
+	// independent options b/w ch
+	strcpy(umfile, s->opt.umfile);
+	verb = s->opt.verb;
 
 	////////////////////////////////////////////////////////////
 	// Receiver position
 	////////////////////////////////////////////////////////////
 
-	// Allocate user motion array
-	xyz = (double **)malloc(USER_MOTION_SIZE * sizeof(double**));
+    // Allocate user motion array
+    xyz = (double **)malloc(USER_MOTION_SIZE * sizeof(double **));
+    if (xyz == NULL)
+    {
+        printf("ERROR: Faild to allocate user motion array.\n");
+        goto exit;
+    }
+    numd = setReceiverPosition(xyz, &(s->opt));
+    if (numd < 0)
+    {
+        goto exit;
+    }
 
-	if (xyz==NULL)
-	{
-		printf("ERROR: Faild to allocate user motion array.\n");
-		goto exit;
-	}
-
-	for (i=0; i<USER_MOTION_SIZE; i++)
-	{
-		xyz[i] = (double *)malloc(3 * sizeof(double));
-
-		if (xyz[i]==NULL)
-		{
-			for (j=i-1; j>=0; j--)
-				free(xyz[i]);
-
-			printf("ERROR: Faild to allocate user motion array.\n");
-			goto exit;
-		}
-	}
-
-	if (!staticLocationMode)
-	{
-		// Read user motion file
-		if (nmeaGGA==TRUE)
-			numd = readNmeaGGA(xyz, umfile);
-		else
-		{
-			numd = readUserMotion(xyz, umfile);
-		}
-
-		if (numd==-1)
-		{
-			printf("ERROR: Failed to open user motion / NMEA GGA file.\n");
-			goto exit;
-		}
-		else if (numd==0)
-		{
-			printf("ERROR: Failed to read user motion / NMEA GGA data.\n");
-			goto exit;
-		}
-
-		// Set simulation duration
-		if (numd>iduration)
-			numd = iduration;
-	}
-	else
-	{
-		// Static geodetic coordinates input mode: "-l"
-		// Added by scateu@gmail.com
-		printf("Using static location mode.\n");
-		llh2xyz(llh,xyz[0]); // Convert llh to xyz
-
-		numd = iduration;
-
-		for (iumd=1; iumd<numd; iumd++)
-		{
-			xyz[iumd][0] = xyz[0][0];
-			xyz[iumd][1] = xyz[0][1];
-			xyz[iumd][2] = xyz[0][2];
-		}
-	}
+    if (s->ch2_enable)
+    {
+        xyz2 = (double **)malloc(USER_MOTION_SIZE * sizeof(double **));
+        if (xyz2 == NULL)
+        {
+            printf("ERROR: Faild to allocate user motion array.\n");
+            goto exit;
+        }
+        int numd2 = setReceiverPosition(xyz2, &(s->opt2));
+        if (numd2 < 0)
+        {
+            goto exit;
+        }
+        if (numd2 < numd)
+        {
+            numd = numd2;
+        }
+    }
 
 	// Initialize the local tangential matrix for interactive mode
-	ltcmat(llh, tmat);
+	ltcmat(s->opt.llh, tmat);
 	if (interactive)
 	{
 		printf("Enable interactive mode.\n");
 		numd = iduration;
 	}
 
-	printf("xyz = %11.1f, %11.1f, %11.1f\n", xyz[0][0], xyz[0][1], xyz[0][2]);
-	printf("llh = %11.6f, %11.6f, %11.1f\n", llh[0]*R2D, llh[1]*R2D, llh[2]);
-
 	////////////////////////////////////////////////////////////
 	// Read ephemeris
 	////////////////////////////////////////////////////////////
 
-	neph = readRinexNavAll(eph, &ionoutc, navfile);
+	neph = readRinexNavAll(env.eph, &(env.ionoutc), navfile);
 
 	if (neph==0)
 	{
@@ -2203,8 +2403,10 @@ void *gps_task(void *arg)
 		goto exit;
 	}
 
-	if (ionoutc.vflg==TRUE)
-	{
+    ionoutc_t ionoutc = env.ionoutc;
+    ephem_t (*eph)[MAX_SAT] = env.eph;
+    if (ionoutc.vflg == TRUE)
+        {
 		printf("  %12.3e %12.3e %12.3e %12.3e\n",
 			ionoutc.alpha0, ionoutc.alpha1, ionoutc.alpha2, ionoutc.alpha3);
 		printf("  %12.3e %12.3e %12.3e %12.3e\n",
@@ -2252,8 +2454,8 @@ void *gps_task(void *arg)
 			dsec = subGpsTime(gtmp,gmin);
 
 			// Overwrite the UTC reference week number
-			ionoutc.wnt = gtmp.week;
-			ionoutc.tot = (int)gtmp.sec;
+			env.ionoutc.wnt = ionoutc.wnt = gtmp.week;
+			env.ionoutc.tot = ionoutc.tot = (int)gtmp.sec;
 
 			// Overwrite the TOC and TOE to the scenario start time
 			for (sv=0; sv<MAX_SAT; sv++)
@@ -2264,11 +2466,11 @@ void *gps_task(void *arg)
 					{
 						gtmp = incGpsTime(eph[i][sv].toc, dsec);
 						gps2date(&gtmp,&ttmp);
-						eph[i][sv].toc = gtmp;
-						eph[i][sv].t = ttmp;
+						env.eph[i][sv].toc = gtmp;
+						env.eph[i][sv].t = ttmp;
 
 						gtmp = incGpsTime(eph[i][sv].toe, dsec);
-						eph[i][sv].toe = gtmp;
+						env.eph[i][sv].toe = gtmp;
 					}
 				}
 			}
@@ -2331,7 +2533,7 @@ void *gps_task(void *arg)
 	// Read almanac
 	////////////////////////////////////////////////////////////
 
-	nalm = readAlmanac(alm, almfile);
+	nalm = readAlmanac(env.alm, almfile);
 
 	if (almfile[0] != 0 && nalm == -1)
 	{
@@ -2350,9 +2552,9 @@ void *gps_task(void *arg)
 		// Check TOA
 		for (sv = 0; sv < MAX_SAT; sv++)
 		{
-			if (alm[sv].id != 0) // Valid almanac
+			if (env.alm[sv].id != 0) // Valid almanac
 			{
-				dt = subGpsTime(alm[sv].toa, g0);
+				dt = subGpsTime(env.alm[sv].toa, g0);
 
 				if (dt<(-4.0*SECONDS_IN_WEEK) || dt>(4.0*SECONDS_IN_WEEK))
 				{
@@ -2369,7 +2571,7 @@ void *gps_task(void *arg)
 	////////////////////////////////////////////////////////////
 
 	// Allocate I/Q buffer
-	iq_buff = calloc(2*iq_buff_size, 2);
+	iq_buff = calloc(2 * iq_buff_size, sizeof(short));
 
 	if (iq_buff==NULL)
 	{
@@ -2381,31 +2583,20 @@ void *gps_task(void *arg)
 	// Initialize channels
 	////////////////////////////////////////////////////////////
 
-	// Clear all channels
-	for (i=0; i<MAX_CHAN; i++)
-		chan[i].prn = 0;
-
-	// Clear satellite allocation flag
-	for (sv=0; sv<MAX_SAT; sv++)
-		allocatedSat[sv] = -1;
-
 	// Initial reception time
 	grx = incGpsTime(g0, 0.0);
 
-	// Allocate visible satellites
-	allocateChannel(chan, eph[ieph], ionoutc, alm, grx, xyz[0], ant_dir, elvmask);
-
-	for(i=0; i<MAX_CHAN; i++)
-	{
-		if (chan[i].prn>0)
-			printf("%02d %6.1f %5.1f %11.1f %5.1f\n", chan[i].prn,
-				chan[i].azel[0]*R2D, chan[i].azel[1]*R2D, chan[i].rho0.d, chan[i].rho0.iono_delay);
-	}
+    initializeChannel(chan, allocatedSat, eph[ieph], &env, xyz[0], s->opt.rec_ant_dir, elvmask);
+    if (s->ch2_enable)
+    {
+        initializeChannel(chan2, allocatedSat2, eph[ieph], &env, xyz2[0], s->opt2.rec_ant_dir, elvmask);
+    }
 
 	////////////////////////////////////////////////////////////
 	// Receiver antenna gain pattern
 	////////////////////////////////////////////////////////////
 
+    // TODO: enhance for ch2
 	for (i=0; i<37; i++)
 		ant_pat[i] = pow(10.0, -ant_pat_db[i]/20.0);
 
@@ -2418,6 +2609,7 @@ void *gps_task(void *arg)
 
 	// Update receiver time
 	grx = incGpsTime(grx, 0.1);
+    env.g = &grx;
 
 	for (iumd=1; iumd<numd; iumd++)
 	{
@@ -2432,7 +2624,7 @@ void *gps_task(void *arg)
 				goto abort;
 		}
 
-		// Interactive mode
+		// Interactive mode NOTE: this is only for ch1
 		if (interactive)
 		{
 			key_direction = UNDEF;
@@ -2507,98 +2699,34 @@ void *gps_task(void *arg)
 
 		for (i=0; i<MAX_CHAN; i++)
 		{
-			if (chan[i].prn>0)
-			{
-				// Refresh code phase and data bit counters
-				range_t rho;
-				sv = chan[i].prn-1;
+            computeObservation(&chan[i], &gain[i], eph[ieph], &env, xyz[iumd], &(s->opt), ant_pat, elvmask);
 
-				// Current pseudorange
-				bool valid = computeRange(&rho, eph[ieph][sv], &ionoutc, grx, xyz[iumd], ant_dir, elvmask);
-				chan[i].azel[0] = rho.azel[0];
-				chan[i].azel[1] = rho.azel[1];
-
-				// Update code phase and data bit counters
-				computeCodePhase(&chan[i], rho, 0.1);
-				chan[i].carr_phasestep = (int)(512 * 65536.0 * chan[i].f_carr * delt);
-
-				// Path loss
-				path_loss = 20200000.0/rho.d; // FIXME: wrong. should be square.
-
-				// Receiver antenna gain
-				ibs = (int)((90.0-rho.azel[1]*R2D)/5.0); // covert elevation to boresight
-				ant_gain = ant_pat[ibs];
-
-				// Signal gain
-				if (s->opt.path_loss_enable == TRUE)
-					gain[i] = (int)(path_loss*ant_gain*128.0); // scaled by 2^7
-				else
-					gain[i] = 128; // hold the power level constant
-			}
+            if (s->ch2_enable)
+            {
+                computeObservation(&chan2[i], &gain2[i], eph[ieph], &env, xyz2[iumd], &(s->opt2), ant_pat, elvmask);
+            }
 		}
 
-		for (isamp=0; isamp<iq_buff_size; isamp++)
+		for (isamp = 0; isamp < num_iq_samples; isamp++)
 		{
-			int i_acc = 0;
-			int q_acc = 0;
-
-			for (i=0; i<MAX_CHAN; i++)
-			{
-				if (chan[i].prn>0)
-				{
-					iTable = (chan[i].carr_phase >> 16) & 511;
-
-					ip = chan[i].dataBit * chan[i].codeCA * cosTable512[iTable] * gain[i];
-					qp = chan[i].dataBit * chan[i].codeCA * sinTable512[iTable] * gain[i];
-
-					// Accumulate for all visible satellites
-					i_acc += ip;
-					q_acc += qp;
-
-					// Update code phase
-					chan[i].code_phase += chan[i].f_code * delt;
-
-					if (chan[i].code_phase>=CA_SEQ_LEN)
-					{
-						chan[i].code_phase -= CA_SEQ_LEN;
-
-						chan[i].icode++;
-
-						if (chan[i].icode>=20) // 20 C/A codes = 1 navigation data bit
-						{
-							chan[i].icode = 0;
-							chan[i].ibit++;
-
-							if (chan[i].ibit>=30) // 30 navigation data bits = 1 word
-							{
-								chan[i].ibit = 0;
-								chan[i].iword++;
-								/*
-								if (chan[i].iword>=N_DWRD)
-									printf("\nWARNING: Subframe word buffer overflow.\n");
-								*/
-							}
-
-							// Set new navigation data bit
-							chan[i].dataBit = (int)((chan[i].dwrd[chan[i].iword]>>(29-chan[i].ibit)) & 0x1UL)*2-1;
-						}
-					}
-
-					// Set currnt code chip
-					chan[i].codeCA = chan[i].ca[(int)chan[i].code_phase]*2-1;
-
-					// Update carrier phase
-					chan[i].carr_phase += chan[i].carr_phasestep;
-				}
-			}
-
-			// Scaled by 2^7
-			i_acc = (i_acc+64)>>7;
-			q_acc = (q_acc+64)>>7;
+            int pos_buffer = 2 * isamp;
+            int iq_acc[2] = {0, 0};
+            int iq_acc2[2] = {0, 0};
+            computeIQacc(iq_acc, chan, gain);
+            if (s->ch2_enable)
+            {
+                pos_buffer = 4 * isamp;
+                computeIQacc(iq_acc2, chan2, gain2);
+            }
 
 			// Store I/Q samples into buffer
-			iq_buff[isamp*2] = (short)i_acc;
-			iq_buff[isamp*2+1] = (short)q_acc;
+			iq_buff[pos_buffer] = (short)iq_acc[0];
+			iq_buff[pos_buffer + 1] = (short)iq_acc[1];
+            if (s->ch2_enable)
+            {
+                iq_buff[pos_buffer + 2] = (short)iq_acc2[0];
+                iq_buff[pos_buffer + 3] = (short)iq_acc2[1];
+            }
 		}
 
 		////////////////////////////////////////////////////////////
@@ -2612,16 +2740,16 @@ void *gps_task(void *arg)
 			pthread_cond_signal(&(s->gps.initialization_done));
 		}
 
-		// Wait utill FIFO write is ready
+		// Wait until FIFO write is ready
 		pthread_mutex_lock(&(s->gps.lock));
 		while (!is_fifo_write_ready(s))
 			pthread_cond_wait(&(s->fifo_write_ready), &(s->gps.lock));
 		pthread_mutex_unlock(&(s->gps.lock));
 
 		// Write into FIFO
-		memcpy(&(s->fifo[s->head * 2]), iq_buff, num_iq_samples * 2 * sizeof(short));
+		memcpy(&(s->fifo[s->head * 2]), iq_buff, iq_buff_size * 2 * sizeof(short));
 
-		s->head += (long)num_iq_samples;
+		s->head += (long)iq_buff_size;
 		if (s->head >= fifo_length)
 			s->head -= fifo_length;
 		pthread_cond_signal(&(s->fifo_read_ready));
@@ -2637,9 +2765,15 @@ void *gps_task(void *arg)
 			// Update navigation message
 			for (i=0; i<MAX_CHAN; i++)
 			{
-				if (chan[i].prn>0)
-					generateNavMsg(grx, &chan[i], 0);
-			}
+                if (chan[i].prn > 0)
+                    generateNavMsg(grx, &chan[i], 0);
+
+                if (s->ch2_enable)
+                {
+                    if (chan2[i].prn > 0)
+                        generateNavMsg(grx, &chan2[i], 0);
+                }
+            }
 
 			// Refresh ephemeris and subframes
 			// Quick and dirty fix. Need more elegant way.
@@ -2655,8 +2789,13 @@ void *gps_task(void *arg)
 						for (i=0; i<MAX_CHAN; i++)
 						{
 							// Generate new subframes if allocated
-							if (chan[i].prn!=0)
-								eph2sbf(eph[ieph][chan[i].prn-1], ionoutc, alm, chan[i].sbf);
+							if (chan[i].prn != 0)
+								eph2sbf(eph[ieph][chan[i].prn-1], ionoutc, env.alm, chan[i].sbf);
+                            if (s->ch2_enable)
+                            {
+                                if (chan2[i].prn != 0)
+                                    eph2sbf(eph[ieph][chan2[i].prn-1], ionoutc, env.alm, chan2[i].sbf);
+                            }
 						}
 					}
 
@@ -2665,29 +2804,35 @@ void *gps_task(void *arg)
 			}
 
 			// Update channel allocation
-			allocateChannel(chan, eph[ieph], ionoutc, alm, grx, xyz[iumd], ant_dir, elvmask);
+			allocateChannel(chan, allocatedSat, eph[ieph], &env, xyz[iumd], s->opt.rec_ant_dir, elvmask);
+            if (s->ch2_enable)
+            {
+                allocateChannel(chan2, allocatedSat2, eph[ieph], &env, xyz2[iumd], s->opt2.rec_ant_dir, elvmask);
+            }
 
-			// Show ditails about simulated channels
+			// Show details about simulated channels
 			if (verb)
 			{
 				printf("\n");
 				gps2date(&grx, &t0);
 				printf("%4d/%02d/%02d,%02d:%02d:%02.0f (%d:%.0f)\n",
 					t0.y, t0.m, t0.d, t0.hh, t0.mm, t0.sec, grx.week, grx.sec);
-				printf("xyz = %11.1f, %11.1f, %11.1f\n", xyz[iumd][0], xyz[iumd][1], xyz[iumd][2]);
-				xyz2llh(xyz[iumd],llh);
-				printf("llh = %11.6f, %11.6f, %11.1f\n", llh[0]*R2D, llh[1]*R2D, llh[2]);
-				for (i=0; i<MAX_CHAN; i++)
-				{
-					if (chan[i].prn>0)
-						printf("%02d %6.1f %5.1f %11.1f %5.1f\n", chan[i].prn,
-							chan[i].azel[0]*R2D, chan[i].azel[1]*R2D, chan[i].rho0.d, chan[i].rho0.iono_delay);
-				}
-			}
-		}
+                // channel 1
+                printf("channel 1\n");
+                printChannelInformation(chan, xyz[iumd]);
+
+                // channel 2
+                if (s->ch2_enable)
+                {
+                    printf("\nchannel 2\n");
+                    printChannelInformation(chan2, xyz2[iumd]);
+                }
+            }
+        }
 
 		// Update receiver time
 		grx = incGpsTime(grx, 0.1);
+        env.g = &grx;
 
 		// Update time counter
 		printf("\rTime into run = %4.1f", subGpsTime(grx, g0));

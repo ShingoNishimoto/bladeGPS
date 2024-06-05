@@ -2,6 +2,7 @@
 
 #include <signal.h>
 #include <setjmp.h>
+#include <assert.h>
 #include "bladegps.h"
 
 // for _getch used in Windows runtime.
@@ -105,7 +106,6 @@ void *tx_task(void *arg)
 		int16_t *tx_buffer_current = s->tx.buffer;
 		unsigned int buffer_samples_remaining = SAMPLES_PER_BUFFER;
 
-		// FIXME: maybe unint doesn't work in this equation
 		while (buffer_samples_remaining > 0) {
 
 			pthread_mutex_lock(&(s->gps.lock));
@@ -138,6 +138,7 @@ void *tx_task(void *arg)
 			buffer_samples_remaining -= (unsigned int)samples_populated;
 			tx_buffer_current += (2 * samples_populated);
 		}
+		assert(buffer_samples_remaining == 0);
 
 		// If there were no errors, transmit the data buffer.
 		bladerf_sync_tx(s->tx.dev, s->tx.buffer, SAMPLES_PER_BUFFER, NULL, TIMEOUT_MS);
@@ -186,16 +187,20 @@ void usage(void)
 		"  -u <user_motion> User motion file (dynamic mode)\n"
 		"  -g <nmea_gga>    NMEA GGA stream (dynamic mode)\n"
 		"  -l <location>    Lat,Lon,Hgt (static mode) e.g. 35.274,137.014,100\n"
+		"  -L <location>    Lat,Lon,Hgt (static mode) of Ch2 e.g. 35.274,137.014,100\n"
 		"  -t <date,time>   Scenario start time YYYY/MM/DD,hh:mm:ss\n"
 		"  -T <date,time>   Overwrite TOC and TOE to scenario start time\n"
 		"  -d <duration>    Duration [sec] (max: %.0f)\n"
-		"  -x <XB number>   Enable XB board, e.g. '-x 200' for XB200\n"
+		"  -x <XB number>   Enable expansion board, e.g. '-x 200' for XB200\n"
 		"  -a <tx_gain>     TX Gain (default: %d)\n"
+		"  -A <rx_gain>     RX Gain (default: %d)\n"
+		"  -r <azi,ele>     Rx antenna attitude in degree (default: azi=0, ele=90)\n"
+		"  -R <azi,ele>     Rx antenna attitude in degree of Ch2 (default: same as Ch1)\n"
 		"  -i               Interactive mode: North='%c', South='%c', East='%c', West='%c'\n"
 		"  -I               Disable ionospheric delay for spacecraft scenario\n"
 		"  -p               Disable path loss and hold power level constant\n",
 		((double)USER_MOTION_SIZE)/10.0,
-		TX_GAIN,
+		TX_GAIN, RX_GAIN,
 		NORTH_KEY, SOUTH_KEY, EAST_KEY, WEST_KEY);
 
 	return;
@@ -269,8 +274,10 @@ int bladegps_main(struct bladerf *dev, int argc, char *argv[])
 	s.opt.path_loss_enable = TRUE;
 	s.opt.rec_ant_dir[0] = 0.0;
 	s.opt.rec_ant_dir[0] = 90.0 *D2R;
+	option_t opt2 = s.opt;
+	s.ch2_enable = false;
 
-	while ((result=getopt(argc,argv,"e:y:u:g:l:T:t:d:x:a:A:r:iIp"))!=-1)
+	while ((result=getopt(argc,argv,":e:y:u:g:l:L:T:t:d:x:a:A:r:R:iIp"))!=-1)
 	{
 		switch (result)
 		{
@@ -298,6 +305,15 @@ int bladegps_main(struct bladerf *dev, int argc, char *argv[])
 			sscanf(optarg,"%lf,%lf,%lf",&s.opt.llh[0],&s.opt.llh[1],&s.opt.llh[2]);
 			s.opt.llh[0] *= D2R; // convert to RAD
 			s.opt.llh[1] *= D2R; // convert to RAD
+			break;
+		case 'L':
+			// Static geodetic coordinates input mode in ch2
+			s.ch2_enable = true;
+			opt2.nmeaGGA = FALSE;
+			opt2.staticLocationMode = TRUE;
+			sscanf(optarg,"%lf,%lf,%lf",&opt2.llh[0],&opt2.llh[1],&opt2.llh[2]);
+			opt2.llh[0] *= D2R; // convert to RAD
+			opt2.llh[1] *= D2R; // convert to RAD
 			break;
 		case 'T':
 			s.opt.timeoverwrite = TRUE;
@@ -357,6 +373,12 @@ int bladegps_main(struct bladerf *dev, int argc, char *argv[])
 			s.opt.rec_ant_dir[0] *= D2R; // convert to RAD
 			s.opt.rec_ant_dir[1] *= D2R; // convert to RAD
 			break;
+		case 'R':
+			s.ch2_enable = true;
+			sscanf(optarg,"%lf,%lf",&opt2.rec_ant_dir[0],&opt2.rec_ant_dir[1]);
+			opt2.rec_ant_dir[0] *= D2R; // convert to RAD
+			opt2.rec_ant_dir[1] *= D2R; // convert to RAD
+			break;
 		case 'i':
 			s.opt.interactive = TRUE;
 			break;
@@ -367,7 +389,11 @@ int bladegps_main(struct bladerf *dev, int argc, char *argv[])
 			s.opt.path_loss_enable = FALSE; // Disable path loss
 			break;
 		case ':':
+			printf("option needs a value\n");
+			usage();
+			exit(1);
 		case '?':
+			printf("unknown option: %c\n", optopt);
 			usage();
 			exit(1);
 		default:
@@ -388,11 +414,17 @@ int bladegps_main(struct bladerf *dev, int argc, char *argv[])
 		exit(1);
 	}
 
+	if (s.ch2_enable)
+	{
+		s.opt2 = opt2;
+	}
+
 	// Initialize simulator
 	init_sim(&s);
 	s.tx.dev = dev;
 	s.status = 0;
 
+	// NOTE: noly checking of ch1 because both are the same.
 	// Get sample rate for buffer size.
 	s.status = bladerf_get_sample_rate(s.tx.dev, tx_channel, &tx_samplerate);
 	if (s.status != 0) {
@@ -404,7 +436,8 @@ int bladegps_main(struct bladerf *dev, int argc, char *argv[])
 	}
 
 	num_iq_samples = (tx_samplerate / 10);
-	fifo_length = (num_iq_samples * 2);
+    // NOTE: fifo_length should be double of buffer size.
+	fifo_length = s.ch2_enable ? (num_iq_samples * 2 * 2) : (num_iq_samples * 2);
 
 	// Allocate FIFOs to hold 0.1 seconds of I/Q samples each.
 	s.fifo = (int16_t *)malloc(fifo_length * sizeof(int16_t) * 2); // for 16-bit I and Q samples
@@ -433,6 +466,7 @@ int bladegps_main(struct bladerf *dev, int argc, char *argv[])
 	// 	goto out;
 	// }
 
+    // FIXME: not used currently, so not set for the ch2 even if the ch2 is used.
 	if(xb_board == 200) {
 		printf("Initializing XB200 expansion board...\n");
 
@@ -473,6 +507,8 @@ int bladegps_main(struct bladerf *dev, int argc, char *argv[])
 		goto out;
 	}
 
+	// NOTE: set frequency only on tx ch1 even though using both channels,
+	// because they become the same once either of them is set.
 	s.status = bladerf_set_frequency(s.tx.dev, tx_channel, TX_FREQUENCY);
 	if (s.status != 0) {
 		fprintf(stderr, "Faield to set TX frequency: %s\n", bladerf_strerror(s.status));
@@ -492,6 +528,8 @@ int bladegps_main(struct bladerf *dev, int argc, char *argv[])
 	// 	printf("TX sample rate: %u sps\n", TX_SAMPLERATE);
 	// }
 
+	// NOTE: set bandwidth only on tx ch1 even though using both channels,
+	// because of the same reason as frequency.
 	s.status = bladerf_set_bandwidth(s.tx.dev, tx_channel, TX_BANDWIDTH, NULL);
 	if (s.status != 0) {
 		fprintf(stderr, "Failed to set TX bandwidth: %s\n", bladerf_strerror(s.status));
@@ -501,6 +539,7 @@ int bladegps_main(struct bladerf *dev, int argc, char *argv[])
 		printf("TX bandwidth: %u Hz\n", TX_BANDWIDTH);
 	}
 
+	// NOTE: gain range is mutual, so only required for ch1.
 	s.status = bladerf_get_gain_range(s.tx.dev, tx_channel, &range);
 	if (s.status != 0) {
 	fprintf(stderr, "Failed to check gain range: %s\n", bladerf_strerror(s.status));
@@ -511,9 +550,9 @@ int bladegps_main(struct bladerf *dev, int argc, char *argv[])
 		max_gain = range->max * range->scale;
 		printf("TX gain range: [%g dB, %g dB] \n",min_gain, max_gain);
 		if (tx_gain < min_gain)
-		tx_gain = min_gain;
-	else if (tx_gain > max_gain)
-		tx_gain = max_gain;
+			tx_gain = min_gain;
+		else if (tx_gain > max_gain)
+			tx_gain = max_gain;
 	}
 
 	s.status = bladerf_set_gain(s.tx.dev, tx_channel, tx_gain);
@@ -527,13 +566,15 @@ int bladegps_main(struct bladerf *dev, int argc, char *argv[])
 		printf("TX1 gain: %d dB\n", tx1_gain);
 	}
 
-	s.status = bladerf_set_gain(s.tx.dev, BLADERF_CHANNEL_TX(1), -22);
+	// NOTE: use the same tx gain as ch1, attenuation according to the distance, etc. should be considered in gpssim.
+    int tx2_gain = s.ch2_enable ? tx_gain : -22;
+
+	s.status = bladerf_set_gain(s.tx.dev, BLADERF_CHANNEL_TX(1), tx2_gain);
 	if (s.status != 0) {
 		fprintf(stderr, "Failed to set gain: %s\n", bladerf_strerror(s.status));
 		goto out;
 	}
 	else {
-		int tx2_gain;
 		s.status = bladerf_get_gain(s.tx.dev, BLADERF_CHANNEL_TX(1), &tx2_gain);
 		printf("TX2 gain: %d dB\n", tx2_gain);
 	}
@@ -553,13 +594,14 @@ int bladegps_main(struct bladerf *dev, int argc, char *argv[])
 		pthread_cond_wait(&(s.gps.initialization_done), &(s.tx.lock));
 	pthread_mutex_unlock(&(s.tx.lock));
 
-	// Fillfull the FIFO.
+	// Fulfill the FIFO.
 	if (is_fifo_write_ready(&s))
 		pthread_cond_signal(&(s.fifo_write_ready));
 
 	// Configure the TX module for use with the synchronous interface.
+	bladerf_channel_layout tx_ch_layout = s.ch2_enable ? BLADERF_TX_X2 : BLADERF_TX_X1;
 	s.status = bladerf_sync_config(s.tx.dev,
-			tx_channel,
+			tx_ch_layout,
 			BLADERF_FORMAT_SC16_Q11,
 			NUM_BUFFERS,
 			SAMPLES_PER_BUFFER,
@@ -577,6 +619,14 @@ int bladegps_main(struct bladerf *dev, int argc, char *argv[])
 		fprintf(stderr, "Failed to enable TX module: %s\n", bladerf_strerror(s.status));
 		goto out;
 	}
+    if (s.ch2_enable)
+    {
+        s.status = bladerf_enable_module(s.tx.dev, BLADERF_CHANNEL_TX(1), true);
+        if (s.status != 0) {
+            fprintf(stderr, "Failed to enable TX module at ch2: %s\n", bladerf_strerror(s.status));
+            goto out;
+        }
+    }
 
 	// Start TX task
 	s.status = start_tx_task(&s);
@@ -599,6 +649,14 @@ int bladegps_main(struct bladerf *dev, int argc, char *argv[])
 	s.status = bladerf_enable_module(s.tx.dev, tx_channel, false);
 	if (s.status != 0)
 		fprintf(stderr, "Failed to disable TX module: %s\n", bladerf_strerror(s.status));
+    if (s.ch2_enable)
+    {
+        s.status = bladerf_enable_module(s.tx.dev, BLADERF_CHANNEL_TX(1), false);
+        if (s.status != 0) {
+            fprintf(stderr, "Failed to disable TX module at ch2: %s\n", bladerf_strerror(s.status));
+            goto out;
+        }
+    }
 
 out:
 	// Free up resources
