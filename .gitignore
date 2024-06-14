@@ -44,6 +44,7 @@ Temporary Items
 
 # Linux
 *.o
+*.so
 *.swp
 bladegps
 
