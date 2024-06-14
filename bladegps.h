@@ -18,7 +18,6 @@
 // #define TX_SAMPLERATE	2600000
 #define TX_BANDWIDTH	2500000
 #define TX_GAIN		-5
-#define RX_GAIN		30
 
 // TODO: check if this parameter is okay.
 #define NUM_BUFFERS			32

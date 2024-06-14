@@ -193,14 +193,13 @@ void usage(void)
 		"  -d <duration>    Duration [sec] (max: %.0f)\n"
 		"  -x <XB number>   Enable expansion board, e.g. '-x 200' for XB200\n"
 		"  -a <tx_gain>     TX Gain (default: %d)\n"
-		"  -A <rx_gain>     RX Gain (default: %d)\n"
 		"  -r <azi,ele>     Rx antenna attitude in degree (default: azi=0, ele=90)\n"
 		"  -R <azi,ele>     Rx antenna attitude in degree of Ch2 (default: same as Ch1)\n"
 		"  -i               Interactive mode: North='%c', South='%c', East='%c', West='%c'\n"
 		"  -I               Disable ionospheric delay for spacecraft scenario\n"
 		"  -p               Disable path loss and hold power level constant\n",
 		((double)USER_MOTION_SIZE)/10.0,
-		TX_GAIN, RX_GAIN,
+		TX_GAIN,
 		NORTH_KEY, SOUTH_KEY, EAST_KEY, WEST_KEY);
 
 	return;
@@ -227,7 +226,7 @@ static void bladegps_opening()
 int bladegps_main(struct bladerf *dev, int argc, char *argv[])
 {
 	sim_t s = {0};
-	char *devstr = NULL;
+	// char *devstr = NULL;
 	int xb_board = 0;
 
 	int result;
@@ -238,7 +237,6 @@ int bladegps_main(struct bladerf *dev, int argc, char *argv[])
 	double min_gain;
 	double max_gain;
 	int tx_gain = TX_GAIN;
-	int rx_gain = RX_GAIN;
 	bladerf_channel tx_channel = BLADERF_CHANNEL_TX(0);
 
 	if (argc<3)
@@ -277,7 +275,7 @@ int bladegps_main(struct bladerf *dev, int argc, char *argv[])
 	option_t opt2 = s.opt;
 	s.ch2_enable = false;
 
-	while ((result=getopt(argc,argv,":e:y:u:g:l:L:T:t:d:x:a:A:r:R:iIp"))!=-1)
+	while ((result=getopt(argc,argv,":e:y:u:g:l:L:T:t:d:x:a:r:R:iIp"))!=-1)
 	{
 		switch (result)
 		{
@@ -362,11 +360,8 @@ int bladegps_main(struct bladerf *dev, int argc, char *argv[])
 		case 'a':
 			tx_gain = atoi(optarg);
 			// NOTE: probably not to break bladerf?
-			if (tx_gain>0)
-				tx_gain *= -1;
-			break;
-		case 'A':
-			rx_gain = atoi(optarg);
+			// if (tx_gain>0)
+			// 	tx_gain *= -1;
 			break;
 		case 'r':
 			sscanf(optarg,"%lf,%lf",&s.opt.rec_ant_dir[0],&s.opt.rec_ant_dir[1]);
