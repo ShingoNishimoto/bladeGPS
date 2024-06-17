@@ -2289,7 +2289,7 @@ void *gps_task(void *arg)
 	int numd;
 	char umfile[MAX_CHAR];
 	// double xyz[USER_MOTION_SIZE][3], xyz2[USER_MOTION_SIZE][3];
-	double **xyz, **xyz2;
+	double **xyz, **xyz2 = NULL;
 
 	char navfile[MAX_CHAR];
 
