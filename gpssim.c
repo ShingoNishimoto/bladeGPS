@@ -2142,11 +2142,12 @@ bool computeObservation(channel_t* chan, int *gain, const ephem_t* eph, const en
 
         // Receiver antenna gain
         int ibs = (int)((90.0-rho.azel[1]*R2D)/5.0); // covert elevation to boresight
-        double ant_gain = ant_pat[ibs];
+        double rec_ant_gain = ant_pat[ibs];
 
         // Signal gain
         if (opt->path_loss_enable == TRUE)
-            *gain = (int)(path_loss * ant_gain * 128.0); // scaled by 2^7
+            // FIXME: add sat antenna
+            *gain = (int)(path_loss * rec_ant_gain * 128.0); // scaled by 2^7
         else
             *gain = 128; // hold the power level constant
 
