@@ -1844,10 +1844,10 @@ int generateNavMsg(const gpstime_t g, channel_t *chan, int init)
 /*  \param[in] eph Const pointer of the ephemeris structure
  *  \param[in] g Const pointer of Receiver time in gps time
  *  \param[in] xyz Array of receiver position
- *  \param[out] azel Array of satellite direction (Azimuth, Elevation)
+ *  \param[out] chan Receiver channel, compute tx_antenna_gain, and azel
  *  \returns visible (1), invisible (0), or invalid (-1)
  */
-int checkSatVisibility(const ephem_t *eph, const gpstime_t *g, const double *xyz, double *azel)
+int checkSatVisibility(const ephem_t *eph, const gpstime_t *g, const double *xyz, channel_t *chan)
 {
 	// FIXME: for ECI.
 	double llh[3],neu[3];
@@ -1874,18 +1874,27 @@ int checkSatVisibility(const ephem_t *eph, const gpstime_t *g, const double *xyz
 
 	satpos(*eph, *g, pos, vel, clk);
 	subVect(los, pos, xyz);
-	// check satellite direction
+	// Check satellite direction
 	double dot_prod_pos_los = dotProd(pos, los);
-	if (dot_prod_pos_los < 0) return 0; // Invisible
+	if (dot_prod_pos_los < 0)
+    {
+        // Invisible. Elevation of receiver w.r.t satellite is negative
+        return 0;
+    }
 
-	ecef2neu(los, tmat, neu);
-	neu2azel(azel, neu);
+    // NOTE: assuming the GPS satellite attitude is Geocentric
+    double ele_receiver_from_sat_rad = 0.5 * PI - acos(dot_prod_pos_los / (normVect(pos) * normVect(los)));
+    // Ensure the elevation is 0 < ele < 90 deg
+    GetAntennaGain(&chan->gps_sat, (uint8_t)(ele_receiver_from_sat_rad * R2D), &chan->tx_antenna_gain);
 
-	// if (azel[1]*R2D > elvMask)
-	if (azel[1] > el_earth_edge) // Check only geometric visibility
-		return (1); // Visible
-	// else
-	return (0); // Invisible
+    ecef2neu(los, tmat, neu);
+    neu2azel(chan->azel, neu);
+
+    // if (azel[1]*R2D > elvMask)
+    if (chan->azel[1] > el_earth_edge)  // Check only geometric visibility
+        return 1;                 // Visible
+    // else
+    return 0;  // Invisible
 }
 
 /*! \brief Allocate visible satellites into each ch. */
@@ -1902,7 +1911,6 @@ int allocateChannel(channel_t *chan, int *allocatedSat, const ephem_t* eph, cons
 {
 	int nsat=0;
 	int i,sv;
-	double azel[2];
 
 	range_t rho = {0};
 	double ref[3]={0.0};
@@ -1915,7 +1923,7 @@ int allocateChannel(channel_t *chan, int *allocatedSat, const ephem_t* eph, cons
 	// Find current page number
 	for (i = 0; i < MAX_CHAN; i++)
 	{
-		if (chan[i].prn != 0)
+		if (chan[i].gps_sat.PRN != 0)
 		{
 			ipage = chan[i].ipage;
 			break;
@@ -1925,32 +1933,34 @@ int allocateChannel(channel_t *chan, int *allocatedSat, const ephem_t* eph, cons
 	// Allocate channel
 	for (sv=0; sv<MAX_SAT; sv++)
 	{
-		if(checkSatVisibility(&eph[sv], env->g, xyz, azel) == 1)
+        channel_t channel = {};
+        InitGPSSatellite(&channel.gps_sat, sv + 1);
+		if(checkSatVisibility(&eph[sv], env->g, xyz, &channel) == 1)
 		{
 			nsat++; // Number of visible satellites
 
 			if (allocatedSat[sv]==-1) // Visible but not allocated
 			{
-				// Allocated new satellite
+				// Allocate new satellite
 				for (i=0; i<MAX_CHAN; i++)
 				{
-					if (chan[i].prn==0)
+					if (chan[i].gps_sat.PRN == 0)
 					{
+                        // FIXME: should allocate based on Tx gain?
 						if (!computeRange(&rho, &eph[sv], &(env->ionoutc), grx, xyz, ant_dir, elvMask)) continue;
+
+                        // Initialize gps_sat, tx_antenna_gain, azel
+                        chan[i] = channel;
 
 						// Initialize pseudorange
 						chan[i].rho0 = rho;
 						// Initialize carrier phase
 						r_xyz = rho.range;
 
-						// Initialize channel
-						chan[i].prn = sv+1;
 						chan[i].ipage = ipage;
-						chan[i].azel[0] = azel[0];
-						chan[i].azel[1] = azel[1];
 
 						// C/A code generation
-						codegen(chan[i].ca, chan[i].prn);
+						codegen(chan[i].ca, chan[i].gps_sat.PRN);
 
 						// Generate subframe
 						eph2sbf(eph[sv], env->ionoutc, env->alm, chan[i].sbf);
@@ -2065,12 +2075,13 @@ void printChannelInformation(const channel_t *chan, const double *xyz)
     printf("xyz = %11.1f, %11.1f, %11.1f\n", xyz[0], xyz[1], xyz[2]);
     xyz2llh(xyz, llh);
     printf("llh = %11.6f, %11.6f, %11.1f\n", llh[0]*R2D, llh[1]*R2D, llh[2]);
+    printf("PRN    Azi   Ele PseudoRange   Ion TxGain\n");
     int i;
     for (i = 0; i < MAX_CHAN; i++)
     {
-        if (chan[i].prn > 0)
-            printf("%02d %6.1f %5.1f %11.1f %5.1f\n", chan[i].prn,
-                chan[i].azel[0] * R2D, chan[i].azel[1] * R2D, chan[i].rho0.d, chan[i].rho0.iono_delay);
+        if (chan[i].gps_sat.PRN > 0)
+            printf(" %02d %6.1f %5.1f %11.1f %5.1f %6d\n", chan[i].gps_sat.PRN,
+                chan[i].azel[0] * R2D, chan[i].azel[1] * R2D, chan[i].rho0.d, chan[i].rho0.iono_delay, chan[i].tx_antenna_gain);
     }
 }
 
@@ -2089,7 +2100,7 @@ void initializeChannel(channel_t* chan, int* allocatedSat, const ephem_t *eph, c
     int i;
     for (i = 0; i < MAX_CHAN; i++)
     {
-        chan[i].prn = 0;
+        chan[i].gps_sat.PRN = 0;
     }
 
 	// Clear satellite allocation flag
@@ -2116,11 +2127,11 @@ void initializeChannel(channel_t* chan, int* allocatedSat, const ephem_t *eph, c
 bool computeObservation(channel_t* chan, int *gain, const ephem_t* eph, const env_t* env, const double* xyz, const option_t* opt, const double *ant_pat, const double elvmask)
 {
     double delt = 1.0 / (double)tx_samplerate;
-    if (chan->prn>0)
+    if (chan->gps_sat.PRN > 0)
     {
         // Refresh code phase and data bit counters
         range_t rho;
-        int sv = chan->prn - 1;
+        int sv = chan->gps_sat.PRN - 1;
 
         // Compute current pseudorange
         if (!computeRange(&rho, &eph[sv], &(env->ionoutc), *(env->g), xyz, opt->rec_ant_dir, elvmask))
@@ -2144,12 +2155,16 @@ bool computeObservation(channel_t* chan, int *gain, const ephem_t* eph, const en
         int ibs = (int)((90.0-rho.azel[1]*R2D)/5.0); // covert elevation to boresight
         double rec_ant_gain = ant_pat[ibs];
 
+        // GPS Tx antenna gain
+        const int8_t boresight_tx_gain_db = chan->gps_sat.antenna_gain[0]; // TODO: id 2 is maximum 16dB
+        // Normalize it to avoid the over range
+        const double normalized_tx_gain = pow(10.0, (chan->tx_antenna_gain - boresight_tx_gain_db) / 10.0);
+
         // Signal gain
         if (opt->path_loss_enable == TRUE)
-            // FIXME: add sat antenna
-            *gain = (int)(path_loss * rec_ant_gain * 128.0); // scaled by 2^7
+            *gain = (int)(path_loss * rec_ant_gain * normalized_tx_gain * 128.0); // scaled by 2^7
         else
-            *gain = 128; // hold the power level constant
+            *gain = (128 * normalized_tx_gain); // hold the power level constant
 
         return true;
     }
@@ -2168,7 +2183,7 @@ void computeIQacc(int *iq_acc, channel_t * chan, const int* gain)
     int i;
     for (i = 0; i < MAX_CHAN; i++)
     {
-        if (chan[i].prn > 0)
+        if (chan[i].gps_sat.PRN > 0)
         {
             int iTable = (chan[i].carr_phase >> 16) & 511;
 
@@ -2599,7 +2614,7 @@ void *gps_task(void *arg)
 
     // TODO: enhance for ch2
 	for (i=0; i<37; i++)
-		ant_pat[i] = pow(10.0, -ant_pat_db[i]/20.0);
+		ant_pat[i] = pow(10.0, -ant_pat_db[i]/20.0); // FIXME: should be 10log.
 
 	////////////////////////////////////////////////////////////
 	// Generate baseband signals
@@ -2766,12 +2781,12 @@ void *gps_task(void *arg)
 			// Update navigation message
 			for (i=0; i<MAX_CHAN; i++)
 			{
-                if (chan[i].prn > 0)
+                if (chan[i].gps_sat.PRN > 0)
                     generateNavMsg(grx, &chan[i], 0);
 
                 if (s->ch2_enable)
                 {
-                    if (chan2[i].prn > 0)
+                    if (chan2[i].gps_sat.PRN > 0)
                         generateNavMsg(grx, &chan2[i], 0);
                 }
             }
@@ -2790,12 +2805,12 @@ void *gps_task(void *arg)
 						for (i=0; i<MAX_CHAN; i++)
 						{
 							// Generate new subframes if allocated
-							if (chan[i].prn != 0)
-								eph2sbf(eph[ieph][chan[i].prn-1], ionoutc, env.alm, chan[i].sbf);
+							if (chan[i].gps_sat.PRN != 0)
+								eph2sbf(eph[ieph][chan[i].gps_sat.PRN - 1], ionoutc, env.alm, chan[i].sbf);
                             if (s->ch2_enable)
                             {
-                                if (chan2[i].prn != 0)
-                                    eph2sbf(eph[ieph][chan2[i].prn-1], ionoutc, env.alm, chan2[i].sbf);
+                                if (chan2[i].gps_sat.PRN != 0)
+                                    eph2sbf(eph[ieph][chan2[i].gps_sat.PRN - 1], ionoutc, env.alm, chan2[i].sbf);
                             }
 						}
 					}
