@@ -20,7 +20,7 @@ do_nothing_and_never_up_to_date:
 bladegps.o: bladegps.c do_nothing_and_never_up_to_date
 	${CC} -c bladegps.c ${CFLAGS} -o bladegps.o
 
-libbladegps.so: bladegps.o gpssim.o
+libbladegps.so: bladegps.o gpssim.o gpssatellite.o
 	${CC} $^ ${LDFLAGS} -o $@
 
 clean:

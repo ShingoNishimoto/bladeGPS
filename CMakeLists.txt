@@ -1,8 +1,8 @@
 add_library(bladegps
     SHARED
-        # aowrtx.c
         bladegps.c
         gpssim.c
+        gpssatellite.c
         getopt.c
 )
 
