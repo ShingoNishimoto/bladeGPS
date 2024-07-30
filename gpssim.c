@@ -2713,6 +2713,8 @@ void *gps_task(void *arg)
 			}
 		}
 
+		// FIXME: Logging receiver position with TOW, csv is better.
+
 		for (i=0; i<MAX_CHAN; i++)
 		{
             computeObservation(&chan[i], &gain[i], eph[ieph], &env, xyz[iumd], &(s->opt), ant_pat, elvmask);
