@@ -276,7 +276,7 @@ int bladegps_main(struct bladerf *dev, int argc, char *argv[])
 	option_t opt2 = s.opt;
 	s.ch2_enable = false;
 
-	while ((result=getopt(argc,argv,":e:y:u:g:l:L:T:t:d:x:a:r:R:iIp"))!=-1)
+	while ((result=getopt(argc,argv,":e:y:u:s:g:l:L:T:t:d:x:a:r:R:iIp"))!=-1)
 	{
 		switch (result)
 		{
