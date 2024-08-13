@@ -2340,6 +2340,33 @@ void *gps_task(void *arg)
 	double tmat[3][3];
 	double neu[3];
 
+	// Log file of user motion
+	// FIXME: prepare for the opt2 too.
+	const size_t log_dir_str_size = strlen(s->opt.log_dir);
+	char log_file_name[log_dir_str_size + sizeof("YYYYMMDDhhmmss.txt")];
+	FILE *log_file = NULL;
+	bool dump_user_pos = false;
+	if (log_dir_str_size != 0)
+	{
+		dump_user_pos = true;
+		time_t rawtime;
+		time(&rawtime);
+		strcpy(log_file_name, s->opt.log_dir);
+		strftime(&log_file_name[log_dir_str_size], sizeof(log_file_name), "%Y%m%d%H%M%S", localtime(&rawtime));
+		strcpy(&log_file_name[log_dir_str_size + 14], ".txt");
+		// for debug
+		printf("log file path: %s\n", log_file_name);
+
+		log_file = fopen(log_file_name, "w");
+		if (log_file == NULL)
+		{
+			perror("Unable to open file");
+			goto exit;
+		}
+		// Write the header
+		fprintf(log_file, "t, x, y, z\n");
+	}
+
 	////////////////////////////////////////////////////////////
 	// Read options
 	////////////////////////////////////////////////////////////
@@ -2713,6 +2740,10 @@ void *gps_task(void *arg)
 			}
 		}
 
+		// Logging receiver position with gpstime.
+		if (dump_user_pos)
+			fprintf(log_file, "%lf,%lf,%lf,%lf\n", grx.sec, xyz[iumd][0], xyz[iumd][1], xyz[iumd][2]);
+
 		for (i=0; i<MAX_CHAN; i++)
 		{
             computeObservation(&chan[i], &gain[i], eph[ieph], &env, xyz[iumd], &(s->opt), ant_pat, elvmask);
@@ -2871,7 +2902,13 @@ abort:
 		free(xyz[i]);
 	free(xyz);
 
+	// Close log file
+	if (dump_user_pos) fclose(log_file);
+
 exit:
+	// Close log file
+	if (dump_user_pos) fclose(log_file);
+
 	printf("Abort.\n");
 	return (NULL);
 }

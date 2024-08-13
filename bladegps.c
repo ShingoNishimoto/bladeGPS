@@ -185,6 +185,7 @@ void usage(void)
 		"  -e <gps_nav>     RINEX navigation file for GPS ephemerides (required)\n"
 		"  -y <yuma_alm>    YUMA almanac file for GPS almanacs\n"
 		"  -u <user_motion> User motion file (dynamic mode)\n"
+		"  -s <log_dir>     Log directory of user position (dynamic mode)\n"
 		"  -g <nmea_gga>    NMEA GGA stream (dynamic mode)\n"
 		"  -l <location>    Lat,Lon,Hgt (static mode) e.g. 35.274,137.014,100\n"
 		"  -L <location>    Lat,Lon,Hgt (static mode) of Ch2 e.g. 35.274,137.014,100\n"
@@ -275,7 +276,7 @@ int bladegps_main(struct bladerf *dev, int argc, char *argv[])
 	option_t opt2 = s.opt;
 	s.ch2_enable = false;
 
-	while ((result=getopt(argc,argv,":e:y:u:g:l:L:T:t:d:x:a:r:R:iIp"))!=-1)
+	while ((result=getopt(argc,argv,":e:y:u:s:g:l:L:T:t:d:x:a:r:R:iIp"))!=-1)
 	{
 		switch (result)
 		{
@@ -289,6 +290,10 @@ int bladegps_main(struct bladerf *dev, int argc, char *argv[])
 			strcpy(s.opt.umfile, optarg);
 			s.opt.nmeaGGA = FALSE;
 			s.opt.staticLocationMode = FALSE;
+			break;
+		case 's':
+			strcpy(s.opt.log_dir, optarg);
+			s.opt.nmeaGGA = FALSE;
 			break;
 		case 'g':
 			strcpy(s.opt.umfile, optarg);
@@ -402,7 +407,8 @@ int bladegps_main(struct bladerf *dev, int argc, char *argv[])
 		exit(1);
 	}
 
-	if (s.opt.umfile[0]==0 && !s.opt.staticLocationMode)
+	if ((s.opt.umfile[0]==0 && !s.opt.staticLocationMode) ||
+		(s.opt.log_dir[0] == 0 && !s.opt.staticLocationMode))
 	{
 		printf("ERROR: User motion file / NMEA GGA stream is not specified.\n");
 		printf("You may use -l to specify the static location directly.\n");
