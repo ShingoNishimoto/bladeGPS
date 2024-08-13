@@ -2741,7 +2741,8 @@ void *gps_task(void *arg)
 		}
 
 		// Logging receiver position with gpstime.
-		fprintf(log_file, "%lf,%lf,%lf,%lf\n", grx.sec, xyz[iumd][0], xyz[iumd][1], xyz[iumd][2]);
+		if (dump_user_pos)
+			fprintf(log_file, "%lf,%lf,%lf,%lf\n", grx.sec, xyz[iumd][0], xyz[iumd][1], xyz[iumd][2]);
 
 		for (i=0; i<MAX_CHAN; i++)
 		{
