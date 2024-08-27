@@ -1871,6 +1871,7 @@ int checkSatVisibility(const ephem_t *eph, const gpstime_t *g, const double *xyz
 		el_earth_edge = 0;
 	}
 	ltcmat(llh, tmat);
+	// FIXME: how to detect the behind of moon?
 
 	satpos(*eph, *g, pos, vel, clk);
 	subVect(los, pos, xyz);
