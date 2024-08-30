@@ -2341,30 +2341,35 @@ void *gps_task(void *arg)
 	double neu[3];
 
 	// Log file of user motion
-	// FIXME: prepare for the opt2 too.
 	const size_t log_dir_str_size = strlen(s->opt.log_dir);
-	char log_file_name[log_dir_str_size + sizeof("YYYYMMDDhhmmss.txt")];
-	FILE *log_file = NULL;
-	bool dump_user_pos = false;
+	FILE *log_files[2] = {NULL, NULL};
+	bool dump_user_pos[2] = {false, false};
 	if (log_dir_str_size != 0)
 	{
-		dump_user_pos = true;
-		time_t rawtime;
-		time(&rawtime);
-		strcpy(log_file_name, s->opt.log_dir);
-		strftime(&log_file_name[log_dir_str_size], sizeof(log_file_name), "%Y%m%d%H%M%S", localtime(&rawtime));
-		strcpy(&log_file_name[log_dir_str_size + 14], ".txt");
-		// for debug
-		printf("log file path: %s\n", log_file_name);
+        for (uint8_t i = 0; i < 2; i++)
+        {
+            char log_file_name[log_dir_str_size + sizeof("YYYYMMDDhhmmss_ch1.txt")];
+            if ((i == 0 && s->opt.staticLocationMode) ||
+                (i == 1 && s->opt2.staticLocationMode)) continue;
+            dump_user_pos[i] = true;
+            time_t rawtime;
+            time(&rawtime);
+            strcpy(log_file_name, s->opt.log_dir);
+            strftime(&log_file_name[log_dir_str_size], sizeof(log_file_name), "%Y%m%d%H%M%S", localtime(&rawtime));
+            const char *suffix = (i == 0) ? "_ch1.txt" : "_ch2.txt";
+            strcpy(&log_file_name[log_dir_str_size + 14], suffix);
+            // for debug
+            printf("log file path: %s\n", log_file_name);
 
-		log_file = fopen(log_file_name, "w");
-		if (log_file == NULL)
-		{
-			perror("Unable to open file");
-			goto exit;
-		}
-		// Write the header
-		fprintf(log_file, "t, x, y, z\n");
+            log_files[i] = fopen(log_file_name, "w");
+            if (log_files[i] == NULL)
+            {
+                perror("Unable to open file");
+                goto exit;
+            }
+            // Write the header
+            fprintf(log_files[i], "t, x, y, z\n");
+        }
 	}
 
 	////////////////////////////////////////////////////////////
@@ -2741,8 +2746,10 @@ void *gps_task(void *arg)
 		}
 
 		// Logging receiver position with gpstime.
-		if (dump_user_pos)
-			fprintf(log_file, "%lf,%lf,%lf,%lf\n", grx.sec, xyz[iumd][0], xyz[iumd][1], xyz[iumd][2]);
+		if (dump_user_pos[0])
+			fprintf(log_files[0], "%lf,%lf,%lf,%lf\n", grx.sec, xyz[iumd][0], xyz[iumd][1], xyz[iumd][2]);
+		if (dump_user_pos[1])
+			fprintf(log_files[1], "%lf,%lf,%lf,%lf\n", grx.sec, xyz2[iumd][0], xyz2[iumd][1], xyz2[iumd][2]);
 
 		for (i=0; i<MAX_CHAN; i++)
 		{
@@ -2903,11 +2910,13 @@ abort:
 	free(xyz);
 
 	// Close log file
-	if (dump_user_pos) fclose(log_file);
+	if (dump_user_pos[0]) fclose(log_files[0]);
+	if (dump_user_pos[1]) fclose(log_files[1]);
 
 exit:
 	// Close log file
-	if (dump_user_pos) fclose(log_file);
+	if (dump_user_pos[0]) fclose(log_files[0]);
+	if (dump_user_pos[1]) fclose(log_files[1]);
 
 	printf("Abort.\n");
 	return (NULL);
