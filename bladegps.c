@@ -184,7 +184,8 @@ void usage(void)
 		"Options:\n"
 		"  -e <gps_nav>     RINEX navigation file for GPS ephemerides (required)\n"
 		"  -y <yuma_alm>    YUMA almanac file for GPS almanacs\n"
-		"  -u <user_motion> User motion file (dynamic mode)\n"
+		"  -u <user_motion> User motion file (dynamic mode) for Ch1\n"
+		"  -U <user_motion> User motion file (dynamic mode) for Ch2\n"
 		"  -s <log_dir>     Log directory of user position (dynamic mode)\n"
 		"  -g <nmea_gga>    NMEA GGA stream (dynamic mode)\n"
 		"  -l <location>    Lat,Lon,Hgt (static mode) e.g. 35.274,137.014,100\n"
@@ -276,7 +277,7 @@ int bladegps_main(struct bladerf *dev, int argc, char *argv[])
 	option_t opt2 = s.opt;
 	s.ch2_enable = false;
 
-	while ((result=getopt(argc,argv,":e:y:u:s:g:l:L:T:t:d:x:a:r:R:iIp"))!=-1)
+	while ((result=getopt(argc,argv,":e:y:u:U:s:g:l:L:T:t:d:x:a:r:R:iIp"))!=-1)
 	{
 		switch (result)
 		{
@@ -290,6 +291,12 @@ int bladegps_main(struct bladerf *dev, int argc, char *argv[])
 			strcpy(s.opt.umfile, optarg);
 			s.opt.nmeaGGA = FALSE;
 			s.opt.staticLocationMode = FALSE;
+			break;
+		case 'U':
+			s.ch2_enable = true;
+			strcpy(opt2.umfile, optarg);
+			opt2.nmeaGGA = FALSE;
+			opt2.staticLocationMode = FALSE;
 			break;
 		case 's':
 			strcpy(s.opt.log_dir, optarg);
@@ -408,7 +415,7 @@ int bladegps_main(struct bladerf *dev, int argc, char *argv[])
 	}
 
 	if ((s.opt.umfile[0]==0 && !s.opt.staticLocationMode) ||
-		(s.opt.log_dir[0] == 0 && !s.opt.staticLocationMode))
+		(opt2.umfile[0]==0 && !opt2.staticLocationMode))
 	{
 		printf("ERROR: User motion file / NMEA GGA stream is not specified.\n");
 		printf("You may use -l to specify the static location directly.\n");
@@ -425,7 +432,7 @@ int bladegps_main(struct bladerf *dev, int argc, char *argv[])
 	s.tx.dev = dev;
 	s.status = 0;
 
-	// NOTE: noly checking of ch1 because both are the same.
+	// NOTE: only checking of ch1 because both are the same.
 	// Get sample rate for buffer size.
 	s.status = bladerf_get_sample_rate(s.tx.dev, tx_channel, &tx_samplerate);
 	if (s.status != 0) {
