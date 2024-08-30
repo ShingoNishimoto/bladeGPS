@@ -23,6 +23,7 @@
 
 #include "gpssim.h"
 #include "bladegps.h"
+#include "../algorithms/libs/environment/frame.h"
 
 int sinTable512[] = {
 	   2,   5,   8,  11,  14,  17,  20,  23,  26,  29,  32,  35,  38,  41,  44,  47,
@@ -1871,17 +1872,57 @@ int checkSatVisibility(const ephem_t *eph, const gpstime_t *g, const double *xyz
 		el_earth_edge = 0;
 	}
 	ltcmat(llh, tmat);
-	// FIXME: how to detect the behind of moon?
 
-	satpos(*eph, *g, pos, vel, clk);
-	subVect(los, pos, xyz);
-	// Check satellite direction
-	double dot_prod_pos_los = dotProd(pos, los);
-	if (dot_prod_pos_los < 0)
-    {
-        // Invisible. Elevation of receiver w.r.t satellite is negative
-        return 0;
-    }
+    satpos(*eph, *g, pos, vel, clk);
+    subVect(los, pos, xyz);
+    // Check satellite direction
+    double dot_prod_pos_los = dotProd(pos, los);
+    if (dot_prod_pos_los < 0)
+        {
+            // Invisible. Elevation of receiver w.r.t satellite is negative
+            return 0;
+        }
+
+    // TODO: think better way
+    if (llh[2] > 3e8)
+        {
+            // Check if the sc is behind of moon
+            TimeSystem *time_system = TimeSystemInit();
+            Earth *earth = EarthInit(GetJ2000EpochJulianDay(time_system));
+            Moon *moon = MoonInit(g->week, g->sec, EarthGravityConst(earth));
+            double julian_day = ConvGPSTimeToJulianDate(time_system, g->week, g->sec);
+            double* lunar_pos_i = GetPositionI(moon, julian_day);
+            Frame *frame = FrameInit(earth, moon, time_system);
+            double dcm_eci_to_ecef[9];
+            GetDcmEciToEcef(frame, julian_day, dcm_eci_to_ecef);
+            double lunar_pos_ecef[3];
+            for (uint8_t i = 0; i < 3; i++)
+                {
+                    lunar_pos_ecef[i] = dcm_eci_to_ecef[3 * i] * lunar_pos_i[0]
+                                      + dcm_eci_to_ecef[3 * i + 1] * lunar_pos_i[1]
+                                      + dcm_eci_to_ecef[3 * i + 2] * lunar_pos_i[2];
+                }
+            // FIXME: lunar pos and sc pos have a large difference.
+
+            double radius_moon_m = GetRadiusKm(moon) * 1000;
+            double los_from_moon_to_gps[3];
+            subVect(los_from_moon_to_gps, pos, lunar_pos_ecef);
+            double distance_sc2gps = normVect(los);
+            double distance_moon2gps = normVect(los_from_moon_to_gps);
+            double zenith_lunar_edge_rad = asin(radius_moon_m / distance_moon2gps);
+            // Check elevation only when the distance is bigger than distance to edge
+            if (distance_sc2gps > distance_moon2gps * cos(zenith_lunar_edge_rad))
+                {
+                    double zenith_sc_rad = acos(dotProd(los_from_moon_to_gps, los) / (distance_moon2gps * distance_sc2gps));
+                    // Behind the moon
+                    if (zenith_sc_rad < zenith_lunar_edge_rad)
+                        {
+                            // For debug
+                            printf("SC is behind the moon!\n");
+                            return 0;
+                        }
+                }
+        }
 
     // NOTE: assuming the GPS satellite attitude is Geocentric
     double ele_receiver_from_sat_rad = 0.5 * PI - acos(dot_prod_pos_los / (normVect(pos) * normVect(los)));

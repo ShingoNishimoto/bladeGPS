@@ -10,6 +10,14 @@ target_include_directories(bladegps
     PUBLIC
         ${CMAKE_SOURCE_DIR}/bladeRF/host/libraries/libbladeRF/include
         ${CMAKE_SOURCE_DIR}/bladeRF/host/build/output
+        # ../algorithms/libs/environment
+)
+
+target_link_libraries(bladegps
+    PRIVATE
+        # core_system_parameters
+        # algorithms_libs_rtklib
+        algorithms_libs_environment
 )
 
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O3 -Wall -I ${CMAKE_SOURCE_DIR}/bladeRF/host/libraries/libbladeRF/include -shared")
