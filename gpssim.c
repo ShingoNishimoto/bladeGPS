@@ -2392,6 +2392,7 @@ void *gps_task(void *arg)
         {
             char log_file_name[log_dir_str_size + sizeof("YYYYMMDDhhmmss_ch1.txt")];
             if ((i == 0 && s->opt.staticLocationMode) ||
+                (!s->ch2_enable && i == 1) ||
                 (i == 1 && s->opt2.staticLocationMode)) continue;
             dump_user_pos[i] = true;
             time_t rawtime;
