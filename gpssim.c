@@ -1902,7 +1902,6 @@ int checkSatVisibility(const ephem_t *eph, const gpstime_t *g, const double *xyz
                                       + dcm_eci_to_ecef[3 * i + 1] * lunar_pos_i[1]
                                       + dcm_eci_to_ecef[3 * i + 2] * lunar_pos_i[2];
                 }
-            // FIXME: lunar pos and sc pos have a large difference.
 
             double radius_moon_m = GetRadiusKm(moon) * 1000;
             double los_from_moon_to_gps[3];
@@ -1913,6 +1912,7 @@ int checkSatVisibility(const ephem_t *eph, const gpstime_t *g, const double *xyz
             // Check elevation only when the distance is bigger than distance to edge
             if (distance_sc2gps > distance_moon2gps * cos(zenith_lunar_edge_rad))
                 {
+                    // NOTE: should be around 0.004453 rad.
                     double zenith_sc_rad = acos(dotProd(los_from_moon_to_gps, los) / (distance_moon2gps * distance_sc2gps));
                     // Behind the moon
                     if (zenith_sc_rad < zenith_lunar_edge_rad)
@@ -2207,6 +2207,7 @@ bool computeObservation(channel_t* chan, int *gain, const ephem_t* eph, const en
             *gain = (int)(path_loss * rec_ant_gain * normalized_tx_gain * 128.0); // scaled by 2^7
         else
             *gain = (128 * normalized_tx_gain); // hold the power level constant
+            // *gain = (128); // hold the power level constant
 
         return true;
     }
