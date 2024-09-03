@@ -103,6 +103,11 @@ double ant_pat_db[37] = {
 	31.56
 };
 
+	// Environment
+TimeSystem *time_system;
+Earth *earth;
+Moon *moon;
+Frame *frame;
 
 /*! \brief Subtract two vectors of double
  *  \param[out] y Result of subtraction
@@ -1887,12 +1892,8 @@ int checkSatVisibility(const ephem_t *eph, const gpstime_t *g, const double *xyz
     if (llh[2] > 3e8)
         {
             // Check if the sc is behind of moon
-            TimeSystem *time_system = TimeSystemInit();
-            Earth *earth = EarthInit(GetJ2000EpochJulianDay(time_system));
-            Moon *moon = MoonInit(g->week, g->sec, EarthGravityConst(earth));
             double julian_day = ConvGPSTimeToJulianDate(time_system, g->week, g->sec);
             double* lunar_pos_i = GetPositionI(moon, julian_day);
-            Frame *frame = FrameInit(earth, moon, time_system);
             double dcm_eci_to_ecef[9];
             GetDcmEciToEcef(frame, julian_day, dcm_eci_to_ecef);
             double lunar_pos_ecef[3];
@@ -2438,6 +2439,12 @@ void *gps_task(void *arg)
 	// independent options b/w ch
 	strcpy(umfile, s->opt.umfile);
 	verb = s->opt.verb;
+
+	// Initialize global variables for environment
+	time_system = TimeSystemInit();
+	earth = EarthInit(GetJ2000EpochJulianDay(time_system));
+	moon = MoonInit(g0.week, g0.sec, EarthGravityConst(earth));
+	frame = FrameInit(earth, moon, time_system);
 
 	////////////////////////////////////////////////////////////
 	// Receiver position
