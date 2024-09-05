@@ -1936,7 +1936,7 @@ int checkSatVisibility(const ephem_t *eph, const gpstime_t *g, const double *xyz
     // if (azel[1]*R2D > elvMask)
     if (chan->azel[1] > el_earth_edge)  // Check only geometric visibility
         return 1;                 // Visible
-    // else
+
     return 0;  // Invisible
 }
 
@@ -1950,7 +1950,7 @@ int checkSatVisibility(const ephem_t *eph, const gpstime_t *g, const double *xyz
  *  \param[in] elvMask elevation mask angle [deg]
  *  \returns Number of GNSS satellites
  */
-int allocateChannel(channel_t *chan, int *allocatedSat, const ephem_t* eph, const env_t *env, const double *xyz, const double* ant_dir, double elvMask)
+int allocateChannel(channel_t *chan, int *allocatedSat, const ephem_t* eph, const env_t *env, const double *xyz, const double* ant_dir, double elvMask, FILE* log_file)
 {
 	int nsat=0;
 	int i,sv;
@@ -1973,6 +1973,8 @@ int allocateChannel(channel_t *chan, int *allocatedSat, const ephem_t* eph, cons
 		}
 	}
 
+	if (log_file != NULL)
+		fprintf(log_file, "%lf", grx.sec);
 	// Allocate channel
 	for (sv=0; sv<MAX_SAT; sv++)
 	{
@@ -1980,6 +1982,8 @@ int allocateChannel(channel_t *chan, int *allocatedSat, const ephem_t* eph, cons
         InitGPSSatellite(&channel.gps_sat, sv + 1);
 		if(checkSatVisibility(&eph[sv], env->g, xyz, &channel) == 1)
 		{
+			if (log_file != NULL)
+				fprintf(log_file, ",%d", 1);
 			nsat++; // Number of visible satellites
 
 			if (allocatedSat[sv]==-1) // Visible but not allocated
@@ -2028,16 +2032,23 @@ int allocateChannel(channel_t *chan, int *allocatedSat, const ephem_t* eph, cons
 					allocatedSat[sv] = i;
 			}
 		}
-		else if (allocatedSat[sv]>=0) // Not visible but allocated
+		else
 		{
-			// Clear channel
-            channel_t ch_clear = {};
-			chan[allocatedSat[sv]] = ch_clear;
+			if (allocatedSat[sv]>=0) // Not visible but allocated
+			{
+				// Clear channel
+				channel_t ch_clear = {};
+				chan[allocatedSat[sv]] = ch_clear;
 
-			// Clear satellite allocation flag
-			allocatedSat[sv] = -1;
+				// Clear satellite allocation flag
+				allocatedSat[sv] = -1;
+			}
+			if (log_file != NULL)
+				fprintf(log_file, ",%d", 0);
 		}
 	}
+	if (log_file != NULL)
+		fprintf(log_file, "\n");
 
 	return(nsat); // isn't used now.
 }
@@ -2137,7 +2148,7 @@ void printChannelInformation(const channel_t *chan, const double *xyz)
  *  \param[in] ant_dir Array of receiver antenna direction (azi, ele)
  *  \param[in] elvMask elevation mask angle [deg]
  */
-void initializeChannel(channel_t* chan, int* allocatedSat, const ephem_t *eph, const env_t *env, const double *xyz, const double* ant_dir, const double elvmask)
+void initializeChannel(channel_t* chan, int* allocatedSat, const ephem_t *eph, const env_t *env, const double *xyz, const double* ant_dir, const double elvmask, FILE* log_file)
 {
     // Clear all channels
     int i;
@@ -2151,14 +2162,13 @@ void initializeChannel(channel_t* chan, int* allocatedSat, const ephem_t *eph, c
 		allocatedSat[sv] = -1;
 
 	// Allocate visible satellites
-	allocateChannel(chan, allocatedSat, eph, env, xyz, ant_dir, elvmask);
+	allocateChannel(chan, allocatedSat, eph, env, xyz, ant_dir, elvmask, log_file);
 
     printChannelInformation(chan, xyz);
 }
 
 /*! \brief Compute receiver observation and gain */
 /*  \param[out] chan Pointer of receiver channel
- *  \param[out] gain Pointer of Rx antenna gain [dBi]
  *  \param[in] eph Array of the corresponding ephemeris
  *  \param[in] env Const pointer to the env_t struct
  *  \param[in] xyz Array of receiver position
@@ -2167,7 +2177,7 @@ void initializeChannel(channel_t* chan, int* allocatedSat, const ephem_t *eph, c
  *  \param[in] elvMask elevation mask angle [deg]
  *  \returns valid(true) or not(false)
  */
-bool computeObservation(channel_t* chan, int *gain, const ephem_t* eph, const env_t* env, const double* xyz, const option_t* opt, const double *ant_pat, const double elvmask)
+bool computeObservation(channel_t* chan, const ephem_t* eph, const env_t* env, const double* xyz, const option_t* opt, const double *ant_pat, const double elvmask)
 {
     double delt = 1.0 / (double)tx_samplerate;
     if (chan->gps_sat.PRN > 0)
@@ -2205,9 +2215,9 @@ bool computeObservation(channel_t* chan, int *gain, const ephem_t* eph, const en
 
         // Signal gain
         if (opt->path_loss_enable == TRUE)
-            *gain = (int)(path_loss * rec_ant_gain * normalized_tx_gain * 128.0); // scaled by 2^7
+            chan->gain = (int)(path_loss * rec_ant_gain * normalized_tx_gain * 128.0); // scaled by 2^7
         else
-            *gain = (128 * normalized_tx_gain); // hold the power level constant
+            chan->gain = (128 * normalized_tx_gain); // hold the power level constant
             // *gain = (128); // hold the power level constant
 
         return true;
@@ -2219,9 +2229,8 @@ bool computeObservation(channel_t* chan, int *gain, const ephem_t* eph, const en
 /*! \brief Compute accumulated value of iq sampling */
 /*  \param[out] iq_acc Array of iq accumulation
  *  \param[out] chan Array of receiver channels
- *  \param[in] gain Array of receiver antenna gain
  */
-void computeIQacc(int *iq_acc, channel_t * chan, const int* gain)
+void computeIQacc(int *iq_acc, channel_t * chan)
 {
     double delt = 1.0 / (double)tx_samplerate;
     int i;
@@ -2231,8 +2240,8 @@ void computeIQacc(int *iq_acc, channel_t * chan, const int* gain)
         {
             int iTable = (chan[i].carr_phase >> 16) & 511;
 
-            int ip = chan[i].dataBit * chan[i].codeCA * cosTable512[iTable] * gain[i];
-            int qp = chan[i].dataBit * chan[i].codeCA * sinTable512[iTable] * gain[i];
+            int ip = chan[i].dataBit * chan[i].codeCA * cosTable512[iTable] * chan[i].gain;
+            int qp = chan[i].dataBit * chan[i].codeCA * sinTable512[iTable] * chan[i].gain;
 
             // Accumulate for all visible satellites
             iq_acc[0] += ip;
@@ -2359,8 +2368,6 @@ void *gps_task(void *arg)
         iq_buff_size = 2 * num_iq_samples;
     }
 
-	int gain[MAX_CHAN], gain2[MAX_CHAN];
-
 	double ant_pat[37];
 
 	datetime_t t0,tmin,tmax;
@@ -2387,12 +2394,15 @@ void *gps_task(void *arg)
 	// Log file of user motion
 	const size_t log_dir_str_size = strlen(s->opt.log_dir);
 	FILE *log_files[2] = {NULL, NULL};
+	FILE *visibility_log_files[2] = {NULL, NULL};
 	bool dump_user_pos[2] = {false, false};
 	if (log_dir_str_size != 0)
 	{
+		// TODO: visibility log file
         for (uint8_t i = 0; i < 2; i++)
         {
             char log_file_name[log_dir_str_size + sizeof("YYYYMMDDhhmmss_ch1.txt")];
+            char visibility_file_name[log_dir_str_size + sizeof("YYYYMMDDhhmmss_visibility_ch1.txt")];
             if ((i == 0 && s->opt.staticLocationMode) ||
                 (!s->ch2_enable && i == 1) ||
                 (i == 1 && s->opt2.staticLocationMode)) continue;
@@ -2401,10 +2411,14 @@ void *gps_task(void *arg)
             time(&rawtime);
             strcpy(log_file_name, s->opt.log_dir);
             strftime(&log_file_name[log_dir_str_size], sizeof(log_file_name), "%Y%m%d%H%M%S", localtime(&rawtime));
+            strcpy(visibility_file_name, log_file_name);
             const char *suffix = (i == 0) ? "_ch1.txt" : "_ch2.txt";
             strcpy(&log_file_name[log_dir_str_size + 14], suffix);
+            const char *suffix2 = (i == 0) ? "_visibility_ch1.txt" : "_visibility_ch2.txt";
+            strcpy(&visibility_file_name[log_dir_str_size + 14], suffix2);
             // for debug
             printf("log file path: %s\n", log_file_name);
+            printf("visibility file path: %s\n", visibility_file_name);
 
             log_files[i] = fopen(log_file_name, "w");
             if (log_files[i] == NULL)
@@ -2414,6 +2428,21 @@ void *gps_task(void *arg)
             }
             // Write the header
             fprintf(log_files[i], "t, x, y, z\n");
+
+            visibility_log_files[i] = fopen(visibility_file_name, "w");
+            if (visibility_log_files[i] == NULL)
+            {
+                perror("Unable to open file");
+                goto exit;
+            }
+            // Write the header
+            fprintf(visibility_log_files[i], "t");
+            for (uint32_t sv = 0; sv < MAX_SAT; sv++)
+			{
+				// PRN
+				fprintf(visibility_log_files[i], ", %d", sv + 1);
+			}
+            fprintf(visibility_log_files[i], "\n");
         }
 	}
 
@@ -2441,6 +2470,7 @@ void *gps_task(void *arg)
 	verb = s->opt.verb;
 
 	// Initialize global variables for environment
+	// FIXME: better to put them into env_t?
 	time_system = TimeSystemInit();
 	earth = EarthInit(GetJ2000EpochJulianDay(time_system));
 	moon = MoonInit(g0.week, g0.sec, EarthGravityConst(earth));
@@ -2674,7 +2704,7 @@ void *gps_task(void *arg)
 
 	if (iq_buff==NULL)
 	{
-		printf("ERROR: Faild to allocate 16-bit I/Q buffer.\n");
+		printf("ERROR: Failed to allocate 16-bit I/Q buffer.\n");
 		goto exit;
 	}
 
@@ -2685,10 +2715,10 @@ void *gps_task(void *arg)
 	// Initial reception time
 	grx = incGpsTime(g0, 0.0);
 
-    initializeChannel(chan, allocatedSat, eph[ieph], &env, xyz[0], s->opt.rec_ant_dir, elvmask);
+    initializeChannel(chan, allocatedSat, eph[ieph], &env, xyz[0], s->opt.rec_ant_dir, elvmask, visibility_log_files[0]);
     if (s->ch2_enable)
     {
-        initializeChannel(chan2, allocatedSat2, eph[ieph], &env, xyz2[0], s->opt2.rec_ant_dir, elvmask);
+        initializeChannel(chan2, allocatedSat2, eph[ieph], &env, xyz2[0], s->opt2.rec_ant_dir, elvmask, visibility_log_files[1]);
     }
 
 	////////////////////////////////////////////////////////////
@@ -2804,11 +2834,11 @@ void *gps_task(void *arg)
 
 		for (i=0; i<MAX_CHAN; i++)
 		{
-            computeObservation(&chan[i], &gain[i], eph[ieph], &env, xyz[iumd], &(s->opt), ant_pat, elvmask);
+            computeObservation(&chan[i], eph[ieph], &env, xyz[iumd], &(s->opt), ant_pat, elvmask);
 
             if (s->ch2_enable)
             {
-                computeObservation(&chan2[i], &gain2[i], eph[ieph], &env, xyz2[iumd], &(s->opt2), ant_pat, elvmask);
+                computeObservation(&chan2[i], eph[ieph], &env, xyz2[iumd], &(s->opt2), ant_pat, elvmask);
             }
 		}
 
@@ -2817,11 +2847,11 @@ void *gps_task(void *arg)
             int pos_buffer = 2 * isamp;
             int iq_acc[2] = {0, 0};
             int iq_acc2[2] = {0, 0};
-            computeIQacc(iq_acc, chan, gain);
+            computeIQacc(iq_acc, chan);
             if (s->ch2_enable)
             {
                 pos_buffer = 4 * isamp;
-                computeIQacc(iq_acc2, chan2, gain2);
+                computeIQacc(iq_acc2, chan2);
             }
 
 			// Store I/Q samples into buffer
@@ -2909,10 +2939,10 @@ void *gps_task(void *arg)
 			}
 
 			// Update channel allocation
-			allocateChannel(chan, allocatedSat, eph[ieph], &env, xyz[iumd], s->opt.rec_ant_dir, elvmask);
+			allocateChannel(chan, allocatedSat, eph[ieph], &env, xyz[iumd], s->opt.rec_ant_dir, elvmask, visibility_log_files[0]);
             if (s->ch2_enable)
             {
-                allocateChannel(chan2, allocatedSat2, eph[ieph], &env, xyz2[iumd], s->opt2.rec_ant_dir, elvmask);
+                allocateChannel(chan2, allocatedSat2, eph[ieph], &env, xyz2[iumd], s->opt2.rec_ant_dir, elvmask, visibility_log_files[1]);
             }
 
 			// Show details about simulated channels
@@ -2961,13 +2991,25 @@ abort:
 	free(xyz);
 
 	// Close log file
-	if (dump_user_pos[0]) fclose(log_files[0]);
-	if (dump_user_pos[1]) fclose(log_files[1]);
+	for (i = 0; i < 2; i++)
+	{
+		if (dump_user_pos[i])
+		{
+			fclose(log_files[i]);
+			fclose(visibility_log_files[i]);
+		}
+	}
 
 exit:
 	// Close log file
-	if (dump_user_pos[0]) fclose(log_files[0]);
-	if (dump_user_pos[1]) fclose(log_files[1]);
+	for (i = 0; i < 2; i++)
+	{
+		if (dump_user_pos[i])
+		{
+			fclose(log_files[i]);
+			fclose(visibility_log_files[i]);
+		}
+	}
 
 	printf("Abort.\n");
 	return (NULL);
