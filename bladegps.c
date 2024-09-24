@@ -300,7 +300,7 @@ int bladegps_main(struct bladerf *dev, int argc, char *argv[])
 			break;
 		case 's':
 			strcpy(s.opt.log_dir, optarg);
-			s.opt.nmeaGGA = FALSE;
+			// FIXME: how about opt2?
 			break;
 		case 'g':
 			strcpy(s.opt.umfile, optarg);
@@ -391,9 +391,11 @@ int bladegps_main(struct bladerf *dev, int argc, char *argv[])
 			break;
 		case 'I':
 			s.opt.iono_enable = FALSE; // Disable ionospheric correction
+			opt2.iono_enable = FALSE;
 			break;
 		case 'p':
 			s.opt.path_loss_enable = FALSE; // Disable path loss
+			opt2.path_loss_enable = FALSE;
 			break;
 		case ':':
 			printf("option needs a value\n");

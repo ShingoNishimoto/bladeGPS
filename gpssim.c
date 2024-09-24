@@ -2209,7 +2209,7 @@ bool computeObservation(channel_t* chan, const ephem_t* eph, const env_t* env, c
         double rec_ant_gain = ant_pat[ibs];
 
         // GPS Tx antenna gain
-        const int8_t boresight_tx_gain_db = chan->gps_sat.antenna_gain[0]; // TODO: id 2 is maximum 16dB
+        const int8_t boresight_tx_gain_db = chan->gps_sat.antenna_gain[0]; // TODO: Id 2's maximum is 16dB
         // Normalize it to avoid the over range
         const double normalized_tx_gain = pow(10.0, (chan->tx_antenna_gain - boresight_tx_gain_db) / 10.0);
 
@@ -2218,7 +2218,7 @@ bool computeObservation(channel_t* chan, const ephem_t* eph, const env_t* env, c
             chan->gain = (int)(path_loss * rec_ant_gain * normalized_tx_gain * 128.0); // scaled by 2^7
         else
             chan->gain = (128 * normalized_tx_gain); // hold the power level constant
-            // *gain = (128); // hold the power level constant
+            // chan->gain = (128); // hold the power level constant
 
         return true;
     }
@@ -2970,8 +2970,8 @@ void *gps_task(void *arg)
         env.g = &grx;
 
 		// Update time counter
-		printf("\rTime into run = %4.1f", subGpsTime(grx, g0));
-		fflush(stdout);
+		// printf("\rTime into run = %4.1f", subGpsTime(grx, g0));
+		// fflush(stdout);
 	}
 
 abort:
