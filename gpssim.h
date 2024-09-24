@@ -193,6 +193,7 @@ typedef struct
 {
 	gps_satellite gps_sat;  /*< GPS satellite */
 	int8_t tx_antenna_gain;  /*< GPS satellite Tx antenna gain [dB] */
+	int gain;  /*< Signal gain */
 	int ca[CA_SEQ_LEN]; /*< C/A Sequence */
 	double f_carr;	/*< Carrier frequency */
 	double f_code;	/*< Code frequency */
