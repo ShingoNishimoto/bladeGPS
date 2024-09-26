@@ -113,7 +113,6 @@ void *tx_task(void *arg)
 			{
 				pthread_cond_wait(&(s->fifo_read_ready), &(s->gps.lock));
 			}
-//			assert(get_sample_length(s) > 0);
 
 			samples_populated = fifo_read(tx_buffer_current,
 				buffer_samples_remaining,
@@ -199,7 +198,8 @@ void usage(void)
 		"  -R <azi,ele>     Rx antenna attitude in degree of Ch2 (default: same as Ch1)\n"
 		"  -i               Interactive mode: North='%c', South='%c', East='%c', West='%c'\n"
 		"  -I               Disable ionospheric delay for spacecraft scenario\n"
-		"  -p               Disable path loss and hold power level constant\n",
+		"  -p               Disable path loss and hold power level constant\n"
+		"  -v               Verbosity option\n",
 		((double)USER_MOTION_SIZE)/10.0,
 		TX_GAIN,
 		NORTH_KEY, SOUTH_KEY, EAST_KEY, WEST_KEY);
@@ -262,7 +262,7 @@ int bladegps_main(struct bladerf *dev, int argc, char *argv[])
 	s.opt.g0.week = -1;
 	s.opt.g0.sec = 0.0;
 	s.opt.iduration = USER_MOTION_SIZE;
-	s.opt.verb = TRUE;
+	s.opt.verb = FALSE;
 	s.opt.nmeaGGA = FALSE;
 	s.opt.staticLocationMode = TRUE; // default user motion
 	s.opt.llh[0] = 40.7850916 * D2R;
@@ -277,7 +277,7 @@ int bladegps_main(struct bladerf *dev, int argc, char *argv[])
 	option_t opt2 = s.opt;
 	s.ch2_enable = false;
 
-	while ((result=getopt(argc,argv,":e:y:u:U:s:g:l:L:T:t:d:x:a:r:R:iIp"))!=-1)
+	while ((result=getopt(argc,argv,":e:y:u:U:s:g:l:L:T:t:d:x:a:r:R:iIpv"))!=-1)
 	{
 		switch (result)
 		{
@@ -300,6 +300,7 @@ int bladegps_main(struct bladerf *dev, int argc, char *argv[])
 			break;
 		case 's':
 			strcpy(s.opt.log_dir, optarg);
+			s.opt.nmeaGGA = FALSE;
 			// FIXME: how about opt2?
 			break;
 		case 'g':
@@ -396,6 +397,9 @@ int bladegps_main(struct bladerf *dev, int argc, char *argv[])
 		case 'p':
 			s.opt.path_loss_enable = FALSE; // Disable path loss
 			opt2.path_loss_enable = FALSE;
+			break;
+		case 'v':
+			s.opt.verb = TRUE;
 			break;
 		case ':':
 			printf("option needs a value\n");
@@ -521,7 +525,7 @@ int bladegps_main(struct bladerf *dev, int argc, char *argv[])
 	// because they become the same once either of them is set.
 	s.status = bladerf_set_frequency(s.tx.dev, tx_channel, TX_FREQUENCY);
 	if (s.status != 0) {
-		fprintf(stderr, "Faield to set TX frequency: %s\n", bladerf_strerror(s.status));
+		fprintf(stderr, "Failed to set TX frequency: %s\n", bladerf_strerror(s.status));
 		goto out;
 	}
 	else {

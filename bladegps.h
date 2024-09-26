@@ -20,9 +20,9 @@
 #define TX_GAIN		-5
 
 // TODO: check if this parameter is okay.
-#define NUM_BUFFERS			32
-#define SAMPLES_PER_BUFFER	(32 * 1024)
-#define NUM_TRANSFERS		16
+#define NUM_BUFFERS			512
+#define SAMPLES_PER_BUFFER	(16 * 1024)
+#define NUM_TRANSFERS		64
 #define TIMEOUT_MS			1000
 
 // #define NUM_IQ_SAMPLES  (TX_SAMPLERATE / 10)
