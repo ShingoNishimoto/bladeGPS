@@ -2207,23 +2207,19 @@ bool computeObservation(channel_t* chan, const ephem_t* eph, const env_t* env, c
         chan->carr_phasestep = (int)(512 * 65536.0 * chan->f_carr * delt);
 
         // Path loss
-        double path_loss = 20200000.0/rho.d; // FIXME: wrong. should be square.
+        double path_loss = opt->path_loss_enable ? 20200000.0/rho.d : 1.0;  // FIXME: wrong. should be square.
 
         // Receiver antenna gain
         int ibs = (int)((90.0-rho.azel[1]*R2D)/5.0); // covert elevation to boresight
-        double rec_ant_gain = ant_pat[ibs];
+        double rec_ant_gain = opt->antenna_pattern_enable ? ant_pat[ibs] : 1.0;
 
         // GPS Tx antenna gain
         const int8_t boresight_tx_gain_db = chan->gps_sat.antenna_gain[0]; // TODO: Id 2's maximum is 16dB
         // Normalize it to avoid the over range
-        const double normalized_tx_gain = pow(10.0, (chan->tx_antenna_gain - boresight_tx_gain_db) / 10.0);
+        const double normalized_tx_gain = opt->antenna_pattern_enable ? pow(10.0, (chan->tx_antenna_gain - boresight_tx_gain_db) / 10.0) : 1.0;
 
         // Signal gain
-        if (opt->path_loss_enable == TRUE)
-            chan->gain = (int)(path_loss * rec_ant_gain * normalized_tx_gain * 128.0); // scaled by 2^7
-        else
-            chan->gain = (128 * normalized_tx_gain); // hold the power level constant
-            // chan->gain = (128); // hold the power level constant
+		chan->gain = (int)(path_loss * rec_ant_gain * normalized_tx_gain * 128.0); // scaled by 2^7
 
         return true;
     }
@@ -2393,7 +2389,6 @@ void *gps_task(void *arg)
 	int igrx;
 
 	int iduration;
-	int verb;
 
 	int timeoverwrite = FALSE; // Overwirte the TOC and TOE in the RINEX file
 
@@ -2484,7 +2479,6 @@ void *gps_task(void *arg)
 
 	// independent options b/w ch
 	strcpy(umfile, s->opt.umfile);
-	verb = s->opt.verb;
 
 	// Initialize global variables for environment
 	// FIXME: better to put them into env_t?
@@ -2503,7 +2497,7 @@ void *gps_task(void *arg)
     xyz = (double **)malloc(USER_MOTION_SIZE * sizeof(double **));
     if (xyz == NULL)
     {
-        printf("ERROR: Faild to allocate user motion array.\n");
+        printf("ERROR: Failed to allocate user motion array.\n");
         goto exit;
     }
     numd = setReceiverPosition(xyz, &(s->opt));
@@ -2965,7 +2959,7 @@ void *gps_task(void *arg)
             }
 
             // Show details about simulated channels
-            if (verb)
+            if (s->opt.verb)
             {
                 printf("\n");
                 gps2date(&grx, &t0);

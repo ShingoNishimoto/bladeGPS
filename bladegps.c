@@ -198,6 +198,7 @@ void usage(void)
 		"  -R <azi,ele>     Rx antenna attitude in degree of Ch2 (default: same as Ch1)\n"
 		"  -i               Interactive mode: North='%c', South='%c', East='%c', West='%c'\n"
 		"  -I               Disable ionospheric delay for spacecraft scenario\n"
+		"  -E               Equal distribution of rx and tx antenna pattern\n"
 		"  -p               Disable path loss and hold power level constant\n"
 		"  -v               Verbosity option\n",
 		((double)USER_MOTION_SIZE)/10.0,
@@ -271,13 +272,14 @@ int bladegps_main(struct bladerf *dev, int argc, char *argv[])
 	s.opt.interactive = FALSE;
 	s.opt.timeoverwrite = FALSE;
 	s.opt.iono_enable = TRUE;
+	s.opt.antenna_pattern_enable = true;
 	s.opt.path_loss_enable = TRUE;
 	s.opt.rec_ant_dir[0] = 0.0;
 	s.opt.rec_ant_dir[0] = 90.0 *D2R;
 	option_t opt2 = s.opt;
 	s.ch2_enable = false;
 
-	while ((result=getopt(argc,argv,":e:y:u:U:s:g:l:L:T:t:d:x:a:r:R:iIpv"))!=-1)
+	while ((result=getopt(argc,argv,":e:y:u:U:s:g:l:L:T:t:d:x:a:r:R:iIEpv"))!=-1)
 	{
 		switch (result)
 		{
@@ -393,6 +395,10 @@ int bladegps_main(struct bladerf *dev, int argc, char *argv[])
 		case 'I':
 			s.opt.iono_enable = FALSE; // Disable ionospheric correction
 			opt2.iono_enable = FALSE;
+			break;
+		case 'E':
+			s.opt.antenna_pattern_enable = false;
+			opt2.antenna_pattern_enable = false;
 			break;
 		case 'p':
 			s.opt.path_loss_enable = FALSE; // Disable path loss
