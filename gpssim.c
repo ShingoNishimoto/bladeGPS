@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <sched.h>
 
 #include <time.h>
 #include <omp.h>
@@ -108,6 +109,7 @@ TimeSystem *time_system;
 Earth *earth;
 Moon *moon;
 Frame *frame;
+static gps_satellite gps_sats[MAX_SAT];
 
 /*! \brief Subtract two vectors of double
  *  \param[out] y Result of subtraction
@@ -1853,7 +1855,7 @@ int generateNavMsg(const gpstime_t g, channel_t *chan, int init)
  *  \param[out] chan Receiver channel, compute tx_antenna_gain, and azel
  *  \returns visible (1), invisible (0), or invalid (-1)
  */
-int checkSatVisibility(const ephem_t *eph, const gpstime_t *g, const double *xyz, channel_t *chan)
+int checkSatVisibility(const ephem_t *eph, const gpstime_t *g, const double *xyz, channel_t *chan, double lunar_pos_ecef[3])
 {
 	// FIXME: for ECI.
 	double llh[3],neu[3];
@@ -1892,18 +1894,6 @@ int checkSatVisibility(const ephem_t *eph, const gpstime_t *g, const double *xyz
     if (llh[2] > 3e8)
         {
             // Check if the sc is behind of moon
-            double julian_day = ConvGPSTimeToJulianDate(time_system, g->week, g->sec);
-            double* lunar_pos_i = GetPositionI(moon, julian_day);
-            double dcm_eci_to_ecef[9];
-            GetDcmEciToEcef(frame, julian_day, dcm_eci_to_ecef);
-            double lunar_pos_ecef[3];
-            for (uint8_t i = 0; i < 3; i++)
-                {
-                    lunar_pos_ecef[i] = dcm_eci_to_ecef[3 * i] * lunar_pos_i[0]
-                                      + dcm_eci_to_ecef[3 * i + 1] * lunar_pos_i[1]
-                                      + dcm_eci_to_ecef[3 * i + 2] * lunar_pos_i[2];
-                }
-
             double radius_moon_m = GetRadiusKm(moon) * 1000;
             double los_from_moon_to_gps[3];
             subVect(los_from_moon_to_gps, pos, lunar_pos_ecef);
@@ -1959,7 +1949,7 @@ int allocateChannel(channel_t *chan, int *allocatedSat, const ephem_t* eph, cons
 	double ref[3]={0.0};
 	double r_ref,r_xyz;
 	double phase_ini;
-    const gpstime_t grx = *(env->g);
+	const gpstime_t grx = *(env->g);
 
 	int ipage = 0; // Initial page count
 
@@ -1975,12 +1965,25 @@ int allocateChannel(channel_t *chan, int *allocatedSat, const ephem_t* eph, cons
 
 	if (log_file != NULL)
 		fprintf(log_file, "%lf", grx.sec);
+
+	// Preparation for moon shadow check
+	double julian_day = ConvGPSTimeToJulianDate(time_system, env->g->week, env->g->sec);
+	double* lunar_pos_i = GetPositionI(moon, julian_day);
+	double dcm_eci_to_ecef[9];
+	GetDcmEciToEcef(frame, julian_day, dcm_eci_to_ecef);
+	double lunar_pos_ecef[3];
+	for (uint8_t i = 0; i < 3; i++)
+		{
+			lunar_pos_ecef[i] = dcm_eci_to_ecef[3 * i] * lunar_pos_i[0]
+								+ dcm_eci_to_ecef[3 * i + 1] * lunar_pos_i[1]
+								+ dcm_eci_to_ecef[3 * i + 2] * lunar_pos_i[2];
+		}
 	// Allocate channel
 	for (sv=0; sv<MAX_SAT; sv++)
 	{
-        channel_t channel = {};
-        InitGPSSatellite(&channel.gps_sat, sv + 1);
-		if(checkSatVisibility(&eph[sv], env->g, xyz, &channel) == 1)
+		channel_t channel = {};
+		channel.gps_sat = gps_sats[sv];
+		if(checkSatVisibility(&eph[sv], env->g, xyz, &channel, lunar_pos_ecef) == 1)
 		{
 			if (log_file != NULL)
 				fprintf(log_file, ",%d", 1);
@@ -1989,15 +1992,16 @@ int allocateChannel(channel_t *chan, int *allocatedSat, const ephem_t* eph, cons
 			if (allocatedSat[sv]==-1) // Visible but not allocated
 			{
 				// Allocate new satellite
+				bool allocated = false;
 				for (i=0; i<MAX_CHAN; i++)
 				{
 					if (chan[i].gps_sat.PRN == 0)
 					{
-                        // FIXME: should allocate based on Tx gain?
-						if (!computeRange(&rho, &eph[sv], &(env->ionoutc), grx, xyz, ant_dir, elvMask)) continue;
+						if (!computeRange(&rho, &eph[sv], &(env->ionoutc), grx, xyz, ant_dir, elvMask))
+							break;
 
-                        // Initialize gps_sat, tx_antenna_gain, azel
-                        chan[i] = channel;
+						// Initialize gps_sat, tx_antenna_gain, azel
+						chan[i] = channel;
 
 						// Initialize pseudorange
 						chan[i].rho0 = rho;
@@ -2023,12 +2027,13 @@ int allocateChannel(channel_t *chan, int *allocatedSat, const ephem_t* eph, cons
 						chan[i].carr_phase = (unsigned int)(512 * 65536.0 * phase_ini);
 
 						// Done.
+						allocated = true;
 						break;
 					}
 				}
 
 				// Set satellite allocation channel
-				if (i<MAX_CHAN)
+				if (allocated)
 					allocatedSat[sv] = i;
 			}
 		}
@@ -2202,23 +2207,19 @@ bool computeObservation(channel_t* chan, const ephem_t* eph, const env_t* env, c
         chan->carr_phasestep = (int)(512 * 65536.0 * chan->f_carr * delt);
 
         // Path loss
-        double path_loss = 20200000.0/rho.d; // FIXME: wrong. should be square.
+        double path_loss = opt->path_loss_enable ? 20200000.0/rho.d : 1.0;  // FIXME: wrong. should be square.
 
         // Receiver antenna gain
         int ibs = (int)((90.0-rho.azel[1]*R2D)/5.0); // covert elevation to boresight
-        double rec_ant_gain = ant_pat[ibs];
+        double rec_ant_gain = opt->antenna_pattern_enable ? ant_pat[ibs] : 1.0;
 
         // GPS Tx antenna gain
-        const int8_t boresight_tx_gain_db = chan->gps_sat.antenna_gain[0]; // TODO: id 2 is maximum 16dB
+        const int8_t boresight_tx_gain_db = chan->gps_sat.antenna_gain[0]; // TODO: Id 2's maximum is 16dB
         // Normalize it to avoid the over range
-        const double normalized_tx_gain = pow(10.0, (chan->tx_antenna_gain - boresight_tx_gain_db) / 10.0);
+        const double normalized_tx_gain = opt->antenna_pattern_enable ? pow(10.0, (chan->tx_antenna_gain - boresight_tx_gain_db) / 10.0) : 1.0;
 
         // Signal gain
-        if (opt->path_loss_enable == TRUE)
-            chan->gain = (int)(path_loss * rec_ant_gain * normalized_tx_gain * 128.0); // scaled by 2^7
-        else
-            chan->gain = (128 * normalized_tx_gain); // hold the power level constant
-            // *gain = (128); // hold the power level constant
+		chan->gain = (int)(path_loss * rec_ant_gain * normalized_tx_gain * 128.0); // scaled by 2^7
 
         return true;
     }
@@ -2337,10 +2338,22 @@ int _getch()
 
 void *gps_task(void *arg)
 {
-	sim_t *s = (sim_t *)arg;
+    // NOTE: this didn't work.
+    // struct sched_param param;
+    // // param.sched_priority = sched_get_priority_max(SCHED_FIFO);  // Max priority
+    // param.sched_priority = 20;
 
-	int sv;
-	int neph,ieph;
+    // // Set real time scheduling using SCHED_FIFO
+    // if (sched_setscheduler(0, SCHED_FIFO, &param) == -1)
+	// {
+	// 	perror("sched_setscheduler");
+	// 	exit(EXIT_FAILURE);
+	// }
+
+    sim_t *s = (sim_t *)arg;
+
+    int sv;
+    int neph, ieph;
     env_t env;
 	gpstime_t g0;
 
@@ -2376,7 +2389,6 @@ void *gps_task(void *arg)
 	int igrx;
 
 	int iduration;
-	int verb;
 
 	int timeoverwrite = FALSE; // Overwirte the TOC and TOE in the RINEX file
 
@@ -2467,7 +2479,6 @@ void *gps_task(void *arg)
 
 	// independent options b/w ch
 	strcpy(umfile, s->opt.umfile);
-	verb = s->opt.verb;
 
 	// Initialize global variables for environment
 	// FIXME: better to put them into env_t?
@@ -2475,6 +2486,8 @@ void *gps_task(void *arg)
 	earth = EarthInit(GetJ2000EpochJulianDay(time_system));
 	moon = MoonInit(g0.week, g0.sec, EarthGravityConst(earth));
 	frame = FrameInit(earth, moon, time_system);
+    for (sv = 0; sv < MAX_SAT; sv++)
+        InitGPSSatellite(&gps_sats[sv], sv + 1);
 
 	////////////////////////////////////////////////////////////
 	// Receiver position
@@ -2484,7 +2497,7 @@ void *gps_task(void *arg)
     xyz = (double **)malloc(USER_MOTION_SIZE * sizeof(double **));
     if (xyz == NULL)
     {
-        printf("ERROR: Faild to allocate user motion array.\n");
+        printf("ERROR: Failed to allocate user motion array.\n");
         goto exit;
     }
     numd = setReceiverPosition(xyz, &(s->opt));
@@ -2498,7 +2511,7 @@ void *gps_task(void *arg)
         xyz2 = (double **)malloc(USER_MOTION_SIZE * sizeof(double **));
         if (xyz2 == NULL)
         {
-            printf("ERROR: Faild to allocate user motion array.\n");
+            printf("ERROR: Failed to allocate user motion array.\n");
             goto exit;
         }
         int numd2 = setReceiverPosition(xyz2, &(s->opt2));
@@ -2945,13 +2958,13 @@ void *gps_task(void *arg)
                 allocateChannel(chan2, allocatedSat2, eph[ieph], &env, xyz2[iumd], s->opt2.rec_ant_dir, elvmask, visibility_log_files[1]);
             }
 
-			// Show details about simulated channels
-			if (verb)
-			{
-				printf("\n");
-				gps2date(&grx, &t0);
-				printf("%4d/%02d/%02d,%02d:%02d:%02.0f (%d:%.0f)\n",
-					t0.y, t0.m, t0.d, t0.hh, t0.mm, t0.sec, grx.week, grx.sec);
+            // Show details about simulated channels
+            if (s->opt.verb)
+            {
+                printf("\n");
+                gps2date(&grx, &t0);
+                printf("%4d/%02d/%02d,%02d:%02d:%02.0f (%d:%.0f)\n",
+                    t0.y, t0.m, t0.d, t0.hh, t0.mm, t0.sec, grx.week, grx.sec);
                 // channel 1
                 printf("channel 1\n");
                 printChannelInformation(chan, xyz[iumd]);
@@ -2970,8 +2983,8 @@ void *gps_task(void *arg)
         env.g = &grx;
 
 		// Update time counter
-		printf("\rTime into run = %4.1f", subGpsTime(grx, g0));
-		fflush(stdout);
+		// printf("\rTime into run = %4.1f", subGpsTime(grx, g0));
+		// fflush(stdout);
 	}
 
 abort:
