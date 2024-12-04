@@ -213,7 +213,7 @@ void date2gps(const datetime_t *t, gpstime_t *g)
 	// Convert time to GPS weeks and seconds.
 	g->week = de / 7;
 	g->sec = (double)(de%7)*SECONDS_IN_DAY + t->hh*SECONDS_IN_HOUR
-		+ t->mm*SECONDS_IN_MINUTE + t->sec;
+		+ t->mm*SECONDS_IN_MINUTE + t->sec + SECONDS_UTC_TO_GPS;
 
 	return;
 }
@@ -221,7 +221,7 @@ void date2gps(const datetime_t *t, gpstime_t *g)
 void gps2date(const gpstime_t *g, datetime_t *t)
 {
 	long c,d,e,f;
-	double gsec = round(g->sec);
+	double gsec = round(g->sec - SECONDS_UTC_TO_GPS);
 
 	// Convert Julian day number to calendar date
 	c = (long)(7.0*(double)g->week + floor(gsec/86400.0)+2444245.0) + 1537;
@@ -1917,7 +1917,7 @@ int checkSatVisibility(const ephem_t *eph, const gpstime_t *g, const double *xyz
 
     // NOTE: assuming the GPS satellite attitude is Geocentric
     double ele_receiver_from_sat_rad = 0.5 * PI - acos(dot_prod_pos_los / (normVect(pos) * normVect(los)));
-    // Ensure the elevation is 0 < ele < 90 deg
+    // Ensure the elevation is 0 < ele < 90 deg by checking the sign of dot product above.
     GetAntennaGain(&chan->gps_sat, (uint8_t)(ele_receiver_from_sat_rad * R2D), &chan->tx_antenna_gain);
 
     ecef2neu(los, tmat, neu);
@@ -1967,17 +1967,29 @@ int allocateChannel(channel_t *chan, int *allocatedSat, const ephem_t* eph, cons
 		fprintf(log_file, "%lf", grx.sec);
 
 	// Preparation for moon shadow check
-	double julian_day = ConvGPSTimeToJulianDate(time_system, env->g->week, env->g->sec);
-	double* lunar_pos_i = GetPositionI(moon, julian_day);
+	double tt = ConvGPSTimeToTt(time_system, env->g->week, env->g->sec);
+	double* lunar_pos_i = GetPositionI(moon, tt);
 	double dcm_eci_to_ecef[9];
-	GetDcmEciToEcef(frame, julian_day, dcm_eci_to_ecef);
+	GetDcmEciToEcef(frame, tt, dcm_eci_to_ecef);
 	double lunar_pos_ecef[3];
-	for (uint8_t i = 0; i < 3; i++)
+	for (i = 0; i < 3; i++)
 		{
 			lunar_pos_ecef[i] = dcm_eci_to_ecef[3 * i] * lunar_pos_i[0]
 								+ dcm_eci_to_ecef[3 * i + 1] * lunar_pos_i[1]
 								+ dcm_eci_to_ecef[3 * i + 2] * lunar_pos_i[2];
 		}
+	// For debug
+	// static FILE* fpt = NULL;
+	// if (fpt == NULL)
+	// 	fpt = fopen("moon_eci.csv", "w+");
+	// 	// fpt = fopen("los_moon2sat.csv", "w+");
+	// // double los_moon2sat[3];
+	// // subVect(los_moon2sat, xyz, lunar_pos_ecef);
+	// // double distance_from_moon = normVect(los_moon2sat);
+	// // fprintf(fpt, "%lf, %lf, %lf, %lf\n", los_moon2sat[0], los_moon2sat[1], los_moon2sat[2], distance_from_moon);
+	// fprintf(fpt, "%lf, %lf, %lf, %lf, %lf\n", tt, lunar_pos_i[0], lunar_pos_i[1], lunar_pos_i[2], normVect(lunar_pos_i));
+	// fflush(fpt);
+
 	// Allocate channel
 	for (sv=0; sv<MAX_SAT; sv++)
 	{
@@ -2483,7 +2495,7 @@ void *gps_task(void *arg)
 	// Initialize global variables for environment
 	// FIXME: better to put them into env_t?
 	time_system = TimeSystemInit();
-	earth = EarthInit(GetJ2000EpochJulianDay(time_system));
+	earth = EarthInit(ConvGPSTimeToTt(time_system, g0.week, g0.sec));
 	moon = MoonInit(g0.week, g0.sec, EarthGravityConst(earth));
 	frame = FrameInit(earth, moon, time_system);
     for (sv = 0; sv < MAX_SAT; sv++)
