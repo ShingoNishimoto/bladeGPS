@@ -105,10 +105,10 @@ double ant_pat_db[37] = {
 };
 
 	// Environment
-TimeSystem *time_system;
-Earth *earth;
-Moon *moon;
-Frame *frame;
+static TimeSystem *time_system;
+static earth *earth_;
+static moon *moon_;
+static Frame *frame;
 static gps_satellite gps_sats[MAX_SAT];
 
 /*! \brief Subtract two vectors of double
@@ -1894,7 +1894,7 @@ int checkSatVisibility(const ephem_t *eph, const gpstime_t *g, const double *xyz
     if (llh[2] > 3e8)
         {
             // Check if the sc is behind of moon
-            double radius_moon_m = GetRadiusKm(moon) * 1000;
+            double radius_moon_m = GetRadiusKm(moon_) * 1000;
             double los_from_moon_to_gps[3];
             subVect(los_from_moon_to_gps, pos, lunar_pos_ecef);
             double distance_sc2gps = normVect(los);
@@ -1966,9 +1966,9 @@ int allocateChannel(channel_t *chan, int *allocatedSat, const ephem_t* eph, cons
 	if (log_file != NULL)
 		fprintf(log_file, "%lf", grx.sec);
 
-	// Preparation for moon shadow check
+	// Preparation for moon occultation check
 	double tt = ConvGPSTimeToTt(time_system, env->g->week, env->g->sec);
-	double* lunar_pos_i = GetPositionI(moon, tt);
+	const double* lunar_pos_i = GetPositionI(moon_, tt);
 	double dcm_eci_to_ecef[9];
 	GetDcmEciToEcef(frame, tt, dcm_eci_to_ecef);
 	double lunar_pos_ecef[3];
@@ -2495,9 +2495,9 @@ void *gps_task(void *arg)
 	// Initialize global variables for environment
 	// FIXME: better to put them into env_t?
 	time_system = TimeSystemInit();
-	earth = EarthInit(ConvGPSTimeToTt(time_system, g0.week, g0.sec));
-	moon = MoonInit(g0.week, g0.sec, EarthGravityConst(earth));
-	frame = FrameInit(earth, moon, time_system);
+	earth_ = EarthInit(ConvGPSTimeToTt(time_system, g0.week, g0.sec));
+	moon_ = MoonInit(g0.week, g0.sec, EarthGravityConst(earth_));
+	frame = FrameInit(earth_, moon_, time_system);
     for (sv = 0; sv < MAX_SAT; sv++)
         InitGPSSatellite(&gps_sats[sv], sv + 1);
 
