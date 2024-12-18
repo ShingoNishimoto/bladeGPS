@@ -2219,7 +2219,8 @@ bool computeObservation(channel_t* chan, const ephem_t* eph, const env_t* env, c
         chan->carr_phasestep = (int)(512 * 65536.0 * chan->f_carr * delt);
 
         // Path loss
-        double path_loss = opt->path_loss_enable ? 20200000.0/rho.d : 1.0;  // FIXME: wrong. should be square.
+        double path_loss_for_sim = opt->path_loss_enable ? 20200000.0/rho.d : 1.0;
+        double path_loss_db = 20 * log10(4 * PI * rho.d * TX_FREQUENCY / SPEED_OF_LIGHT);
 
         // Receiver antenna gain
         int ibs = (int)((90.0-rho.azel[1]*R2D)/5.0); // covert elevation to boresight
@@ -2229,10 +2230,22 @@ bool computeObservation(channel_t* chan, const ephem_t* eph, const env_t* env, c
         const int8_t boresight_tx_gain_db = chan->gps_sat.antenna_gain[0]; // TODO: Id 2's maximum is 16dB
         // Normalize it to avoid the over range
         const double normalized_tx_gain = opt->antenna_pattern_enable ? pow(10.0, (chan->tx_antenna_gain - boresight_tx_gain_db) / 10.0) : 1.0;
+        if (!opt->antenna_pattern_enable)
+        {
+            static const uint8_t required_CN0 = 18;
+            static const double boltzmann_const = 228.6;
+            static const double rx_GT = -20.8;  // LNA gain 40dB, NF 1.5dB
+            static const double boresight_EIRP_and_other_gain = 35 + 3;
+            double rx_CN0 = boresight_EIRP_and_other_gain + (chan->tx_antenna_gain - boresight_tx_gain_db) - path_loss_db + rx_GT + boltzmann_const;
+            if (rx_CN0 < required_CN0)
+            {
+                chan->gain = 0;
+                return false;
+            }
+        }
 
         // Signal gain
-		chan->gain = (int)(path_loss * rec_ant_gain * normalized_tx_gain * 128.0); // scaled by 2^7
-
+        chan->gain = (int)(path_loss_for_sim * rec_ant_gain * normalized_tx_gain * 128.0); // scaled by 2^7
         return true;
     }
 
@@ -2425,12 +2438,10 @@ void *gps_task(void *arg)
 		// TODO: visibility log file
         for (uint8_t i = 0; i < 2; i++)
         {
+            if (!s->ch2_enable && i == 1) continue;
+
             char log_file_name[log_dir_str_size + sizeof("YYYYMMDDhhmmss_ch1.txt")];
             char visibility_file_name[log_dir_str_size + sizeof("YYYYMMDDhhmmss_visibility_ch1.txt")];
-            if ((i == 0 && s->opt.staticLocationMode) ||
-                (!s->ch2_enable && i == 1) ||
-                (i == 1 && s->opt2.staticLocationMode)) continue;
-            dump_user_pos[i] = true;
             time_t rawtime;
             time(&rawtime);
             strcpy(log_file_name, s->opt.log_dir);
@@ -2441,17 +2452,7 @@ void *gps_task(void *arg)
             const char *suffix2 = (i == 0) ? "_visibility_ch1.txt" : "_visibility_ch2.txt";
             strcpy(&visibility_file_name[log_dir_str_size + 14], suffix2);
             // for debug
-            printf("log file path: %s\n", log_file_name);
             printf("visibility file path: %s\n", visibility_file_name);
-
-            log_files[i] = fopen(log_file_name, "w");
-            if (log_files[i] == NULL)
-            {
-                perror("Unable to open file");
-                goto exit;
-            }
-            // Write the header
-            fprintf(log_files[i], "t, x, y, z\n");
 
             visibility_log_files[i] = fopen(visibility_file_name, "w");
             if (visibility_log_files[i] == NULL)
@@ -2467,6 +2468,19 @@ void *gps_task(void *arg)
 				fprintf(visibility_log_files[i], ", %d", sv + 1);
 			}
             fprintf(visibility_log_files[i], "\n");
+
+            if ((i == 0 && s->opt.staticLocationMode) ||
+                (i == 1 && s->opt2.staticLocationMode)) continue;
+            dump_user_pos[i] = true;
+            printf("log file path: %s\n", log_file_name);
+            log_files[i] = fopen(log_file_name, "w");
+            if (log_files[i] == NULL)
+            {
+                perror("Unable to open file");
+                goto exit;
+            }
+            // Write the header
+            fprintf(log_files[i], "t, x, y, z\n");
         }
 	}
 
