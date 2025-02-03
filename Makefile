@@ -7,13 +7,13 @@ SHELL=/bin/bash
 CC=gcc
 CXX=g++
 #CFLAGS+=-O3 -Wall -I../../bladeRF/host/libraries/libbladeRF/include -fPIC
-CFLAGS+=-g -Wall -I../../bladeRF/host/libraries/libbladeRF/include -fPIC
+CFLAGS+=-g -Wall -I../../bladeRF/host/libraries/libbladeRF/include -fPIC -O3
 LDFLAGS=-g -lm -lpthread -L../../bladeRF/host/build/output -lbladeRF -shared
 
 # gnss-sdr cpp files for environment
 libs_dir = ../algorithms/libs/environment/
 rtklib_dir = ../algorithms/libs/rtklib/
-CXXFLAGS =-g -Wall -lm -I$(libs_dir) -I$(rtklib_dir) -I../core/system_parameters/ -I$(HOME)/work/cspice/include -fPIC
+CXXFLAGS =-g -Wall -lm -I$(libs_dir) -I$(rtklib_dir) -I../core/system_parameters/ -I$(HOME)/work/cspice/include -fPIC -O3
 LDXXFLAGS=-g -lm -I$(rtklib_dir) -I../core/system_parameters/ -shared
 CXX_SRCS = $(libs_dir)time_system.cc $(libs_dir)celestial_body.cc $(libs_dir)earth.cc $(libs_dir)frame.cc $(libs_dir)moon.cc #$(rtklib_dir)rtklib_rtkcmn.cc
 CXX_OBJS = $(CXX_SRCS:.cc=.o)

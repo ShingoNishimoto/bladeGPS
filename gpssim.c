@@ -26,6 +26,8 @@
 #include "bladegps.h"
 #include "../algorithms/libs/environment/frame.h"
 
+// #define NO_LOG_OUT
+
 int sinTable512[] = {
 	   2,   5,   8,  11,  14,  17,  20,  23,  26,  29,  32,  35,  38,  41,  44,  47,
 	  50,  53,  56,  59,  62,  65,  68,  71,  74,  77,  80,  83,  86,  89,  91,  94,
@@ -1963,8 +1965,10 @@ int allocateChannel(channel_t *chan, int *allocatedSat, const ephem_t* eph, cons
 		}
 	}
 
+#ifndef NO_LOG_OUT
 	if (log_file != NULL)
 		fprintf(log_file, "%lf", grx.sec);
+#endif  // NO_LOG_OUT
 
 	// Preparation for moon occultation check
 	double tt = ConvGPSTimeToTt(time_system, env->g->week, env->g->sec);
@@ -1997,8 +2001,10 @@ int allocateChannel(channel_t *chan, int *allocatedSat, const ephem_t* eph, cons
 		channel.gps_sat = gps_sats[sv];
 		if(checkSatVisibility(&eph[sv], env->g, xyz, &channel, lunar_pos_ecef) == 1)
 		{
+#ifndef NO_LOG_OUT
 			if (log_file != NULL)
 				fprintf(log_file, ",%d", 1);
+#endif // NO_LOG_OUT
 			nsat++; // Number of visible satellites
 
 			if (allocatedSat[sv]==-1) // Visible but not allocated
@@ -2060,12 +2066,16 @@ int allocateChannel(channel_t *chan, int *allocatedSat, const ephem_t* eph, cons
 				// Clear satellite allocation flag
 				allocatedSat[sv] = -1;
 			}
+#ifndef NO_LOG_OUT
 			if (log_file != NULL)
 				fprintf(log_file, ",%d", 0);
+#endif // NO_LOG_OUT
 		}
 	}
+#ifndef NO_LOG_OUT
 	if (log_file != NULL)
 		fprintf(log_file, "\n");
+#endif // NO_LOG_OUT
 
 	return(nsat); // isn't used now.
 }

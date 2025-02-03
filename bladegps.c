@@ -2,6 +2,7 @@
 
 #include <signal.h>
 #include <setjmp.h>
+#include <sched.h>
 #include <assert.h>
 #include "bladegps.h"
 
@@ -170,11 +171,23 @@ int start_tx_task(sim_t *s)
 
 int start_gps_task(sim_t *s)
 {
-	int status;
+    int status;
+    // struct sched_param param;
+    // int policy = SCHED_FIFO;  // Real-time FIFO policy
 
-	status = pthread_create(&(s->gps.thread), NULL, gps_task, s);
+    status = pthread_create(&(s->gps.thread), NULL, gps_task, s);
 
-	return(status);
+    // Set scheduling priority
+    // param.sched_priority = sched_get_priority_max(policy);
+    // if (pthread_setschedparam(s->gps.thread, policy, &param) != 0)
+    //     {
+    //         perror("Failed to set thread scheduling");
+    //         exit(EXIT_FAILURE);
+    //     }
+
+    // pthread_join(s->gps.thread, NULL);
+
+    return(status);
 }
 
 void usage(void)
