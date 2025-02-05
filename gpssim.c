@@ -2245,9 +2245,10 @@ bool computeObservation(channel_t* chan, const ephem_t* eph, const env_t* env, c
     {
         static const uint8_t required_CN0 = 18;
         static const double boltzmann_const = 228.6;
-        static const double rx_GT = -20.8;  // LNA gain 40dB, NF 1.5dB
-        static const double boresight_EIRP_and_other_gain = 35 + 3;
-        double rx_CN0 = boresight_EIRP_and_other_gain + (chan->tx_antenna_gain - boresight_tx_gain_db) - path_loss_db + rx_GT + boltzmann_const;
+        static const double rx_GT = -24.0;  // LNA gain 40dB, NF 1.5dB, antenna noise temperature 130 K
+        static const double boresight_EIRP_and_other_loss = 35 - 3;
+        static const double rx_antenna_gain = 15;  // Assume for this computation.
+        double rx_CN0 = boresight_EIRP_and_other_loss + (chan->tx_antenna_gain - boresight_tx_gain_db) + rx_antenna_gain - path_loss_db + rx_GT + boltzmann_const;
         if (rx_CN0 < required_CN0)
         {
             chan->gain = 0;
