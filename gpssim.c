@@ -26,6 +26,8 @@
 #include "bladegps.h"
 #include "../algorithms/libs/environment/frame.h"
 
+// #define NO_LOG_OUT
+
 int sinTable512[] = {
 	   2,   5,   8,  11,  14,  17,  20,  23,  26,  29,  32,  35,  38,  41,  44,  47,
 	  50,  53,  56,  59,  62,  65,  68,  71,  74,  77,  80,  83,  86,  89,  91,  94,
@@ -1890,11 +1892,23 @@ int checkSatVisibility(const ephem_t *eph, const gpstime_t *g, const double *xyz
             return 0;
         }
 
+    // NOTE: assuming the GPS satellite attitude is Geocentric
+    double ele_receiver_from_sat_rad = 0.5 * PI - acos(dot_prod_pos_los / (normVect(pos) * normVect(los)));
+    // Ensure the elevation is 0 < ele < 90 deg by checking the sign of dot product above.
+    GetAntennaGain(&chan->gps_sat, (uint8_t)(ele_receiver_from_sat_rad * R2D), &chan->tx_antenna_gain);
+
+    ecef2neu(los, tmat, neu);
+    neu2azel(chan->azel, neu);
+
+    // if (azel[1]*R2D < elvMask)
+    if (chan->azel[1] < el_earth_edge)  // Check only geometric visibility
+        return 0;
+
     // TODO: think better way
     if (llh[2] > 3e8)
         {
             // Check if the sc is behind of moon
-            double radius_moon_m = GetRadiusKm(moon_) * 1000;
+            const double radius_moon_m = GetRadiusKm(moon_) * 1000;
             double los_from_moon_to_gps[3];
             subVect(los_from_moon_to_gps, pos, lunar_pos_ecef);
             double distance_sc2gps = normVect(los);
@@ -1915,24 +1929,12 @@ int checkSatVisibility(const ephem_t *eph, const gpstime_t *g, const double *xyz
                 }
         }
 
-    // NOTE: assuming the GPS satellite attitude is Geocentric
-    double ele_receiver_from_sat_rad = 0.5 * PI - acos(dot_prod_pos_los / (normVect(pos) * normVect(los)));
-    // Ensure the elevation is 0 < ele < 90 deg by checking the sign of dot product above.
-    GetAntennaGain(&chan->gps_sat, (uint8_t)(ele_receiver_from_sat_rad * R2D), &chan->tx_antenna_gain);
-
-    ecef2neu(los, tmat, neu);
-    neu2azel(chan->azel, neu);
-
-    // if (azel[1]*R2D > elvMask)
-    if (chan->azel[1] > el_earth_edge)  // Check only geometric visibility
-        return 1;                 // Visible
-
-    return 0;  // Invisible
+    return 1;  // visible
 }
 
 /*! \brief Allocate visible satellites into each ch. */
 /*  \param[out] chan Array of receiver channel
- *  \param[out] allocatedSat Array of ch information accodring to the satellite
+ *  \param[out] allocatedSat Array of ch information according to the satellite
  *  \param[in] eph Array of the ephemeris structure
  *  \param[in] env Const pointer of environment structure
  *  \param[in] xyz Array of receiver position
@@ -1963,8 +1965,10 @@ int allocateChannel(channel_t *chan, int *allocatedSat, const ephem_t* eph, cons
 		}
 	}
 
+#ifndef NO_LOG_OUT
 	if (log_file != NULL)
 		fprintf(log_file, "%lf", grx.sec);
+#endif  // NO_LOG_OUT
 
 	// Preparation for moon occultation check
 	double tt = ConvGPSTimeToTt(time_system, env->g->week, env->g->sec);
@@ -1997,8 +2001,10 @@ int allocateChannel(channel_t *chan, int *allocatedSat, const ephem_t* eph, cons
 		channel.gps_sat = gps_sats[sv];
 		if(checkSatVisibility(&eph[sv], env->g, xyz, &channel, lunar_pos_ecef) == 1)
 		{
+#ifndef NO_LOG_OUT
 			if (log_file != NULL)
 				fprintf(log_file, ",%d", 1);
+#endif // NO_LOG_OUT
 			nsat++; // Number of visible satellites
 
 			if (allocatedSat[sv]==-1) // Visible but not allocated
@@ -2060,12 +2066,16 @@ int allocateChannel(channel_t *chan, int *allocatedSat, const ephem_t* eph, cons
 				// Clear satellite allocation flag
 				allocatedSat[sv] = -1;
 			}
+#ifndef NO_LOG_OUT
 			if (log_file != NULL)
 				fprintf(log_file, ",%d", 0);
+#endif // NO_LOG_OUT
 		}
 	}
+#ifndef NO_LOG_OUT
 	if (log_file != NULL)
 		fprintf(log_file, "\n");
+#endif // NO_LOG_OUT
 
 	return(nsat); // isn't used now.
 }
@@ -2196,60 +2206,59 @@ void initializeChannel(channel_t* chan, int* allocatedSat, const ephem_t *eph, c
  */
 bool computeObservation(channel_t* chan, const ephem_t* eph, const env_t* env, const double* xyz, const option_t* opt, const double *ant_pat, const double elvmask)
 {
-    double delt = 1.0 / (double)tx_samplerate;
-    if (chan->gps_sat.PRN > 0)
-    {
-        // Refresh code phase and data bit counters
-        range_t rho;
-        int sv = chan->gps_sat.PRN - 1;
+    const double delt = 1.0 / (double)tx_samplerate;
+    if (chan->gps_sat.PRN == 0)
+        return false;
 
-        // Compute current pseudorange
-        if (!computeRange(&rho, &eph[sv], &(env->ionoutc), *(env->g), xyz, opt->rec_ant_dir, elvmask))
+    // Refresh code phase and data bit counters
+    range_t rho;
+    int sv = chan->gps_sat.PRN - 1;
+
+    // Compute current pseudorange
+    if (!computeRange(&rho, &eph[sv], &(env->ionoutc), *(env->g), xyz, opt->rec_ant_dir, elvmask))
+    {
+        channel_t ch_clear = {};
+        chan = &ch_clear;
+        // allocatedSat[sv] = -1;
+        return false;
+    }
+    chan->azel[0] = rho.azel[0];
+    chan->azel[1] = rho.azel[1];
+
+    // Update code phase and data bit counters
+    computeCodePhase(chan, rho, 0.1);
+    chan->carr_phasestep = (int)(512 * 65536.0 * chan->f_carr * delt);
+
+    // Path loss
+    double path_loss_for_sim = opt->path_loss_enable ? 20200000.0/rho.d : 1.0;
+    double path_loss_db = 20 * log10(4 * PI * rho.d * TX_FREQUENCY / SPEED_OF_LIGHT);
+
+    // Receiver antenna gain
+    int ibs = (int)((90.0-rho.azel[1]*R2D)/5.0); // covert elevation to boresight
+    double rec_ant_gain = opt->antenna_pattern_enable ? ant_pat[ibs] : 1.0;
+
+    // GPS Tx antenna gain
+    const int8_t boresight_tx_gain_db = chan->gps_sat.antenna_gain[0]; // TODO: Id 2's maximum is 16dB
+    // Normalize it to avoid the over range
+    const double normalized_tx_gain = opt->antenna_pattern_enable ? pow(10.0, (chan->tx_antenna_gain - boresight_tx_gain_db) / 10.0) : 1.0;
+    if (!opt->antenna_pattern_enable)
+    {
+        static const uint8_t required_CN0 = 18;
+        static const double boltzmann_const = 228.6;
+        static const double rx_GT = -24.0;  // LNA gain 40dB, NF 1.5dB, antenna noise temperature 130 K
+        static const double boresight_EIRP_and_other_loss = 35 - 3;
+        static const double rx_antenna_gain = 15;  // Assume for this computation.
+        double rx_CN0 = boresight_EIRP_and_other_loss + (chan->tx_antenna_gain - boresight_tx_gain_db) + rx_antenna_gain - path_loss_db + rx_GT + boltzmann_const;
+        if (rx_CN0 < required_CN0)
         {
-            channel_t ch_clear = {};
-            chan = &ch_clear;
-            // allocatedSat[sv] = -1;
+            chan->gain = 0;
             return false;
         }
-        chan->azel[0] = rho.azel[0];
-        chan->azel[1] = rho.azel[1];
-
-        // Update code phase and data bit counters
-        computeCodePhase(chan, rho, 0.1);
-        chan->carr_phasestep = (int)(512 * 65536.0 * chan->f_carr * delt);
-
-        // Path loss
-        double path_loss_for_sim = opt->path_loss_enable ? 20200000.0/rho.d : 1.0;
-        double path_loss_db = 20 * log10(4 * PI * rho.d * TX_FREQUENCY / SPEED_OF_LIGHT);
-
-        // Receiver antenna gain
-        int ibs = (int)((90.0-rho.azel[1]*R2D)/5.0); // covert elevation to boresight
-        double rec_ant_gain = opt->antenna_pattern_enable ? ant_pat[ibs] : 1.0;
-
-        // GPS Tx antenna gain
-        const int8_t boresight_tx_gain_db = chan->gps_sat.antenna_gain[0]; // TODO: Id 2's maximum is 16dB
-        // Normalize it to avoid the over range
-        const double normalized_tx_gain = opt->antenna_pattern_enable ? pow(10.0, (chan->tx_antenna_gain - boresight_tx_gain_db) / 10.0) : 1.0;
-        if (!opt->antenna_pattern_enable)
-        {
-            static const uint8_t required_CN0 = 18;
-            static const double boltzmann_const = 228.6;
-            static const double rx_GT = -20.8;  // LNA gain 40dB, NF 1.5dB
-            static const double boresight_EIRP_and_other_gain = 35 + 3;
-            double rx_CN0 = boresight_EIRP_and_other_gain + (chan->tx_antenna_gain - boresight_tx_gain_db) - path_loss_db + rx_GT + boltzmann_const;
-            if (rx_CN0 < required_CN0)
-            {
-                chan->gain = 0;
-                return false;
-            }
-        }
-
-        // Signal gain
-        chan->gain = (int)(path_loss_for_sim * rec_ant_gain * normalized_tx_gain * 128.0); // scaled by 2^7
-        return true;
     }
 
-    return false;
+    // Signal gain
+    chan->gain = (int)(path_loss_for_sim * rec_ant_gain * normalized_tx_gain * 128.0); // scaled by 2^7
+    return true;
 }
 
 /*! \brief Compute accumulated value of iq sampling */
@@ -3028,27 +3037,31 @@ abort:
 	for (i=0; i<USER_MOTION_SIZE; i++)
 		free(xyz[i]);
 	free(xyz);
-
-	// Close log file
-	for (i = 0; i < 2; i++)
+	if (s->ch2_enable)
 	{
-		if (dump_user_pos[i])
-		{
-			fclose(log_files[i]);
-			fclose(visibility_log_files[i]);
-		}
+		for (i=0; i<USER_MOTION_SIZE; i++)
+			free(xyz2[i]);
+		free(xyz2);
 	}
+
+    // Close log file
+    for (i = 0; i < 2; i++)
+    {
+        if (i == 1 && !s->ch2_enable) break;
+        fclose(visibility_log_files[i]);
+        if (dump_user_pos[i])
+            fclose(log_files[i]);
+    }
 
 exit:
 	// Close log file
-	for (i = 0; i < 2; i++)
-	{
-		if (dump_user_pos[i])
-		{
-			fclose(log_files[i]);
-			fclose(visibility_log_files[i]);
-		}
-	}
+    for (i = 0; i < 2; i++)
+    {
+        if (i == 1 && !s->ch2_enable) break;
+        fclose(visibility_log_files[i]);
+        if (dump_user_pos[i])
+            fclose(log_files[i]);
+    }
 
 	printf("Abort.\n");
 	return (NULL);
