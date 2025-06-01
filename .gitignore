@@ -53,3 +53,7 @@ bladegps
 
 #FPGA images
 external/
+
+# csv trajectory data
+*.csv
+!gps_table.csv
