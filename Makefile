@@ -7,8 +7,8 @@ SHELL=/bin/bash
 CC=gcc
 CXX=g++
 #CFLAGS+=-O3 -Wall -I../../bladeRF/host/libraries/libbladeRF/include -fPIC
-CFLAGS+=-g -Wall -I../../bladeRF/host/libraries/libbladeRF/include -fPIC -O3
-LDFLAGS=-g -lm -lpthread -L../../bladeRF/host/build/output -lbladeRF -shared
+CFLAGS+=-g -Wall -I../../bladeRF/host/libraries/libbladeRF/include -fPIC -O3 -lcsv
+LDFLAGS=-g -lm -lpthread -L../../bladeRF/host/build/output -lbladeRF -shared -lcsv
 
 # gnss-sdr cpp files for environment
 libs_dir = ../algorithms/libs/environment/
@@ -28,7 +28,7 @@ CFLAGS+=-DGIT_COMMIT_ID="$(GIT_COMMIT_ID)" -DGIT_COMMIT_DATE="$(GIT_COMMIT_DATE)
 # all: $(TARGET)
 
 %.o: %.c
-	$(CC) $(CFLAGS) -c $< -o $@
+	$(CC) -DSOURCE_FILE=\"$(shell realpath $<)\" $(CFLAGS) -c $< -o $@
 
 $(libs_dir)%.o: $(libs_dir)%.cc
 	$(CXX) $(CXXFLAGS) -c $< -o $@

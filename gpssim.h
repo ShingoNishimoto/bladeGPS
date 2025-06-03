@@ -13,9 +13,6 @@
 /*! \brief Maximum length of a line in a text file (RINEX, motion) */
 #define MAX_CHAR (100)
 
-/*! \brief Maximum number of satellites in RINEX file */
-#define MAX_SAT (32)
-
 /*! \brief Maximum number of channels we simulate */
 #define MAX_CHAN (12)
 
@@ -192,7 +189,7 @@ typedef struct
 /*! \brief Structure representing a Channel */
 typedef struct
 {
-	gps_satellite gps_sat;  /*< GPS satellite */
+	int8_t sat_id;  /*< GPS satellite id */
 	int8_t tx_antenna_gain;  /*< GPS satellite Tx antenna gain [dB] */
 	int gain;  /*< Signal gain */
 	int ca[CA_SEQ_LEN]; /*< C/A Sequence */
