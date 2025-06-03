@@ -1873,7 +1873,8 @@ int checkSatVisibility(const ephem_t *eph, const gpstime_t *g, const double *xyz
     xyz2llh(xyz,llh);
     if (llh[2] > 0)
     {
-        el_earth_edge = -(0.5 * PI - asin(RADIUS_EARTH /(RADIUS_EARTH + llh[2])));
+        const double ionosphere_exclusion_zone = 1000;  // km
+        el_earth_edge = -(0.5 * PI - asin((RADIUS_EARTH + ionosphere_exclusion_zone) /(RADIUS_EARTH + llh[2])));
     }
     else
     {
@@ -2001,10 +2002,10 @@ int allocateChannel(channel_t *chan, int *allocatedSat, const ephem_t* eph, cons
         channel_t channel = {};
         if(checkSatVisibility(&eph[sv], env->g, xyz, &channel, lunar_pos_ecef) == 1)
         {
-    #ifndef NO_LOG_OUT
+#ifndef NO_LOG_OUT
             if (log_file != NULL)
                 fprintf(log_file, ",%d", 1);
-    #endif // NO_LOG_OUT
+#endif // NO_LOG_OUT
             nsat++; // Number of visible satellites
 
             if (allocatedSat[sv]==-1) // Visible but not allocated
@@ -2067,16 +2068,16 @@ int allocateChannel(channel_t *chan, int *allocatedSat, const ephem_t* eph, cons
                 // Clear satellite allocation flag
                 allocatedSat[sv] = -1;
             }
-    #ifndef NO_LOG_OUT
+#ifndef NO_LOG_OUT
             if (log_file != NULL)
                 fprintf(log_file, ",%d", 0);
-    #endif // NO_LOG_OUT
+#endif // NO_LOG_OUT
         }
     }
-    #ifndef NO_LOG_OUT
+#ifndef NO_LOG_OUT
     if (log_file != NULL)
         fprintf(log_file, "\n");
-    #endif // NO_LOG_OUT
+#endif // NO_LOG_OUT
 
     return(nsat); // isn't used now.
 }
@@ -2204,9 +2205,10 @@ void initializeChannel(channel_t* chan, int* allocatedSat, const ephem_t *eph, c
  *  \param[in] opt Pointer of option
  *  \param[in] ant_pat Array of receiver antenna pattern
  *  \param[in] elvMask elevation mask angle [deg]
+ *  \param[in out] cn0_log file pointer
  *  \returns valid(true) or not(false)
  */
-bool computeObservation(channel_t* chan, const ephem_t* eph, const env_t* env, const double* xyz, const option_t* opt, const double *ant_pat, const double elvmask)
+bool computeObservation(channel_t* chan, const ephem_t* eph, const env_t* env, const double* xyz, const option_t* opt, const double *ant_pat, const double elvmask, FILE* cn0_log)
 {
     const double delt = 1.0 / (double)tx_samplerate;
     if (chan->sat_id == -1)
@@ -2242,20 +2244,24 @@ bool computeObservation(channel_t* chan, const ephem_t* eph, const env_t* env, c
     const int8_t boresight_tx_gain_db = gps_sats[chan->sat_id].antenna_gain[0][0];
     // Normalize it to avoid the over range
     const double normalized_tx_gain = opt->antenna_pattern_enable ? pow(10.0, (chan->tx_antenna_gain - boresight_tx_gain_db) / 10.0) : 1.0;
+    static const uint8_t required_CN0 = 18;
+    static const double boltzmann_const = 228.6;
+    static const double rx_GT = -24.0;  // LNA gain 40dB, NF 1.5dB, antenna noise temperature 130 K
+    static const double boresight_EIRP_and_other_loss = 35 - 3;
+    static const double rx_antenna_gain = 15;  // Assume for this computation.
+    double rx_CN0 = boresight_EIRP_and_other_loss + (chan->tx_antenna_gain - boresight_tx_gain_db) + rx_antenna_gain - path_loss_db + rx_GT + boltzmann_const;
     if (!opt->antenna_pattern_enable)
-    {
-        static const uint8_t required_CN0 = 18;
-        static const double boltzmann_const = 228.6;
-        static const double rx_GT = -24.0;  // LNA gain 40dB, NF 1.5dB, antenna noise temperature 130 K
-        static const double boresight_EIRP_and_other_loss = 35 - 3;
-        static const double rx_antenna_gain = 15;  // Assume for this computation.
-        double rx_CN0 = boresight_EIRP_and_other_loss + (chan->tx_antenna_gain - boresight_tx_gain_db) + rx_antenna_gain - path_loss_db + rx_GT + boltzmann_const;
-        if (rx_CN0 < required_CN0)
         {
-            chan->gain = 0;
-            return false;
+#ifndef NO_LOG_OUT
+            if (cn0_log != NULL)
+                fprintf(cn0_log, ",%lf", rx_CN0);
+#endif // NO_LOG_OUT
+            if (rx_CN0 < required_CN0)
+                {
+                    chan->gain = 0;
+                    return false;
+                }
         }
-    }
 
     // Signal gain
     chan->gain = (int)(path_loss_for_sim * rec_ant_gain * normalized_tx_gain * 128.0); // scaled by 2^7
@@ -2442,53 +2448,69 @@ void *gps_task(void *arg)
     const size_t log_dir_str_size = strlen(s->opt.log_dir);
     FILE *log_files[2] = {NULL, NULL};
     FILE *visibility_log_files[2] = {NULL, NULL};
+    FILE *cn0_log_files[2] = {NULL, NULL};
     bool dump_user_pos[2] = {false, false};
     if (log_dir_str_size != 0)
     {
-        // TODO: visibility log file
+        // FIXME: add CN0 log too.
         for (uint8_t i = 0; i < 2; i++)
         {
             if (!s->ch2_enable && i == 1) continue;
 
-            char log_file_name[log_dir_str_size + sizeof("YYYYMMDDhhmmss_ch1.txt")];
-            char visibility_file_name[log_dir_str_size + sizeof("YYYYMMDDhhmmss_visibility_ch1.txt")];
-            time_t rawtime;
-            time(&rawtime);
+            char log_file_name[log_dir_str_size + sizeof("user_pos_ch1.txt")];
+            char visibility_file_name[log_dir_str_size + sizeof("visibility_ch1.txt")];
+            char cn0_file_name[log_dir_str_size + sizeof("cn0_ch1.txt")];
             strcpy(log_file_name, s->opt.log_dir);
-            strftime(&log_file_name[log_dir_str_size], sizeof(log_file_name), "%Y%m%d%H%M%S", localtime(&rawtime));
-            strcpy(visibility_file_name, log_file_name);
+            strcpy(visibility_file_name, s->opt.log_dir);
+            strcpy(cn0_file_name, s->opt.log_dir);
             const char *suffix = (i == 0) ? "_ch1.txt" : "_ch2.txt";
-            strcpy(&log_file_name[log_dir_str_size + 14], suffix);
-            const char *suffix2 = (i == 0) ? "_visibility_ch1.txt" : "_visibility_ch2.txt";
-            strcpy(&visibility_file_name[log_dir_str_size + 14], suffix2);
+            // User pos file
+            strcpy(&log_file_name[log_dir_str_size], "user_pos");
+            strcpy(&log_file_name[log_dir_str_size + sizeof("user_pos") - 1], suffix);  // Except NULL at the end.
+            // Visibility file
+            strcpy(&visibility_file_name[log_dir_str_size], "visibility");
+            strcpy(&visibility_file_name[log_dir_str_size + sizeof("visibility") - 1], suffix);  // Except NULL at the end.
             // for debug
             printf("visibility file path: %s\n", visibility_file_name);
+            // CN0 file
+            strcpy(&cn0_file_name[log_dir_str_size], "cn0");
+            strcpy(&cn0_file_name[log_dir_str_size + sizeof("cn0") - 1], suffix);  // Except NULL at the end.
 
             visibility_log_files[i] = fopen(visibility_file_name, "w");
             if (visibility_log_files[i] == NULL)
-            {
-                perror("Unable to open file");
-                goto exit;
-            }
+                {
+                    perror("Unable to open file");
+                    goto exit;
+                }
+            cn0_log_files[i] = fopen(cn0_file_name, "w");
+            if (cn0_log_files[i] == NULL)
+                {
+                    perror("Unable to open file");
+                    goto exit;
+                }
             // Write the header
             fprintf(visibility_log_files[i], "t");
+            fprintf(cn0_log_files[i], "t");
             for (uint32_t sv = 0; sv < MAX_SAT; sv++)
-            {
-                // PRN
-                fprintf(visibility_log_files[i], ", %d", sv + 1);
-            }
+                {
+                    // PRN
+                    fprintf(visibility_log_files[i], ", %d", sv + 1);
+                }
             fprintf(visibility_log_files[i], "\n");
+            for (uint16_t ch_id = 0; ch_id < MAX_CHAN; ch_id++)
+                fprintf(cn0_log_files[i], ", %d", ch_id);
+            fprintf(cn0_log_files[i], "\n");
 
             if ((i == 0 && s->opt.staticLocationMode) ||
                 (i == 1 && s->opt2.staticLocationMode)) continue;
             dump_user_pos[i] = true;
-            printf("log file path: %s\n", log_file_name);
+            printf("user position file path: %s\n", log_file_name);
             log_files[i] = fopen(log_file_name, "w");
             if (log_files[i] == NULL)
-            {
-                perror("Unable to open file");
-                goto exit;
-            }
+                {
+                    perror("Unable to open file");
+                    goto exit;
+                }
             // Write the header
             fprintf(log_files[i], "t, x, y, z\n");
         }
@@ -2880,15 +2902,26 @@ void *gps_task(void *arg)
         if (dump_user_pos[1])
             fprintf(log_files[1], "%lf,%lf,%lf,%lf\n", grx.sec, xyz2[iumd][0], xyz2[iumd][1], xyz2[iumd][2]);
 
+#ifndef NO_LOG_OUT
+        // TODO: the log output is too frequent?
+        fprintf(cn0_log_files[0], "%lf", grx.sec);
+        if (s->ch2_enable)
+            fprintf(cn0_log_files[1], "%lf", grx.sec);
+#endif  // NO_LOG_OUT
         for (i=0; i<MAX_CHAN; i++)
         {
-            computeObservation(&chan[i], eph[ieph], &env, xyz[iumd], &(s->opt), ant_pat, elvmask);
+            computeObservation(&chan[i], eph[ieph], &env, xyz[iumd], &(s->opt), ant_pat, elvmask, cn0_log_files[0]);
 
             if (s->ch2_enable)
             {
-                computeObservation(&chan2[i], eph[ieph], &env, xyz2[iumd], &(s->opt2), ant_pat, elvmask);
+                computeObservation(&chan2[i], eph[ieph], &env, xyz2[iumd], &(s->opt2), ant_pat, elvmask, cn0_log_files[1]);
             }
         }
+#ifndef NO_LOG_OUT
+        fprintf(cn0_log_files[0], "\n");
+        if (s->ch2_enable)
+            fprintf(cn0_log_files[1], "\n");
+#endif  // NO_LOG_OUT
 
         for (isamp = 0; isamp < num_iq_samples; isamp++)
         {
@@ -3049,6 +3082,7 @@ abort:
     {
         if (i == 1 && !s->ch2_enable) break;
         fclose(visibility_log_files[i]);
+        fclose(cn0_log_files[i]);
         if (dump_user_pos[i])
             fclose(log_files[i]);
     }
@@ -3059,6 +3093,7 @@ exit:
     {
         if (i == 1 && !s->ch2_enable) break;
         fclose(visibility_log_files[i]);
+        fclose(cn0_log_files[i]);
         if (dump_user_pos[i])
             fclose(log_files[i]);
     }
