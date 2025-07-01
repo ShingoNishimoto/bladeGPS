@@ -57,3 +57,6 @@ external/
 # csv trajectory data
 *.csv
 !gps_table.csv
+
+# Ephemeris data
+*.24n

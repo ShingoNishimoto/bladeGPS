@@ -101,6 +101,7 @@ typedef struct {
 	option_t opt;
 	option_t opt2;
 	bool ch2_enable;
+	bool fast_mode;
 
 	tx_t tx;
 	gps_t gps;

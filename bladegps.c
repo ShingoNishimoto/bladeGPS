@@ -213,6 +213,7 @@ void usage(void)
 		"  -I               Disable ionospheric delay for spacecraft scenario\n"
 		"  -E               Equal distribution of rx and tx antenna pattern\n"
 		"  -p               Disable path loss and hold power level constant\n"
+		"  -f               Fast option, run only simulation part as fast as possible without generating IQ.\n"
 		"  -v               Verbosity option\n",
 		((double)USER_MOTION_SIZE)/10.0,
 		TX_GAIN,
@@ -291,8 +292,9 @@ int bladegps_main(struct bladerf *dev, int argc, char *argv[])
 	s.opt.rec_ant_dir[0] = 90.0 *D2R;
 	option_t opt2 = s.opt;
 	s.ch2_enable = false;
+	s.fast_mode = false;
 
-	while ((result=getopt(argc,argv,":e:y:u:U:s:g:l:L:T:t:d:x:a:r:R:iIEpv"))!=-1)
+	while ((result=getopt(argc,argv,":e:y:u:U:s:g:l:L:T:t:d:x:a:r:R:iIEpfv"))!=-1)
 	{
 		switch (result)
 		{
@@ -416,6 +418,9 @@ int bladegps_main(struct bladerf *dev, int argc, char *argv[])
 		case 'p':
 			s.opt.path_loss_enable = FALSE; // Disable path loss
 			opt2.path_loss_enable = FALSE;
+			break;
+		case 'f':
+			s.fast_mode = true;
 			break;
 		case 'v':
 			s.opt.verb = TRUE;
