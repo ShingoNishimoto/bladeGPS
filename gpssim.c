@@ -5,6 +5,7 @@
 #include <string.h>
 #include <math.h>
 #include <sched.h>
+#include <assert.h>
 
 #include <time.h>
 #include <omp.h>
@@ -1768,6 +1769,7 @@ int generateNavMsg(const gpstime_t g, channel_t *chan, int init)
     g0.week = g.week;
     g0.sec = (double)(((unsigned long)(g.sec+0.5))/30UL) * 30.0; // Align with the full frame length = 30 sec
     chan->g0 = g0; // Data bit reference time
+    assert(g0.week != 0);
 
     wn = (unsigned long)(g0.week%1024);
     tow = ((unsigned long)g0.sec)/6UL;
@@ -2063,6 +2065,7 @@ int allocateChannel(channel_t *chan, int *allocatedSat, const ephem_t* eph, cons
             {
                 // Clear channel
                 channel_t ch_clear = {};
+                ch_clear.sat_id = -1;
                 chan[allocatedSat[sv]] = ch_clear;
 
                 // Clear satellite allocation flag
@@ -2162,7 +2165,7 @@ void printChannelInformation(const channel_t *chan, const double *xyz)
     int i;
     for (i = 0; i < MAX_CHAN; i++)
     {
-        const uint8_t PRN = gps_sats[chan[i].sat_id].sat_info.PRN;
+        const uint8_t PRN = (chan[i].sat_id >= 0) ? gps_sats[chan[i].sat_id].sat_info.PRN : 0;
         if (PRN > 0)
             printf(" %02d %6.1f %5.1f %11.1f %5.1f %6d\n", PRN,
                 chan[i].azel[0] * R2D, chan[i].azel[1] * R2D, chan[i].rho0.d, chan[i].rho0.iono_delay, chan[i].tx_antenna_gain);
@@ -2222,12 +2225,14 @@ bool computeObservation(channel_t* chan, const ephem_t* eph, const env_t* env, c
     {
         channel_t ch_clear = {};
         chan = &ch_clear;
+        chan->sat_id = -1;
         // allocatedSat[chan->sat_id] = -1;
         return false;
     }
     chan->azel[0] = rho.azel[0];
     chan->azel[1] = rho.azel[1];
 
+    assert(chan->g0.week != 0);
     // Update code phase and data bit counters
     computeCodePhase(chan, rho, 0.1);
     chan->carr_phasestep = (int)(512 * 65536.0 * chan->f_carr * delt);
@@ -2923,57 +2928,58 @@ void *gps_task(void *arg)
             fprintf(cn0_log_files[1], "\n");
 #endif  // NO_LOG_OUT
 
-        for (isamp = 0; isamp < num_iq_samples; isamp++)
-        {
-            int pos_buffer = 2 * isamp;
-            int iq_acc[2] = {0, 0};
-            int iq_acc2[2] = {0, 0};
-            computeIQacc(iq_acc, chan);
-            if (s->ch2_enable)
+        if (!s->fast_mode)
             {
-                pos_buffer = 4 * isamp;
-                computeIQacc(iq_acc2, chan2);
+                for (isamp = 0; isamp < num_iq_samples; isamp++)
+                {
+                    int pos_buffer = 2 * isamp;
+                    int iq_acc[2] = {0, 0};
+                    int iq_acc2[2] = {0, 0};
+                    computeIQacc(iq_acc, chan);
+                    if (s->ch2_enable)
+                    {
+                        pos_buffer = 4 * isamp;
+                        computeIQacc(iq_acc2, chan2);
+                    }
+
+                    // Store I/Q samples into buffer
+                    iq_buff[pos_buffer] = (short)iq_acc[0];
+                    iq_buff[pos_buffer + 1] = (short)iq_acc[1];
+                    if (s->ch2_enable)
+                    {
+                        iq_buff[pos_buffer + 2] = (short)iq_acc2[0];
+                        iq_buff[pos_buffer + 3] = (short)iq_acc2[1];
+                    }
+                }
+
+                ////////////////////////////////////////////////////////////
+                // Write into FIFO
+                ///////////////////////////////////////////////////////////
+
+                if (!s->gps.ready) {
+                    // Initialization has been done. Ready to create TX task.
+                    printf("GPS signal generator is ready!\n");
+                    s->gps.ready = 1;
+                    pthread_cond_signal(&(s->gps.initialization_done));
+                }
+
+                // Wait until FIFO write is ready
+                pthread_mutex_lock(&(s->gps.lock));
+                while (!is_fifo_write_ready(s))
+                    pthread_cond_wait(&(s->fifo_write_ready), &(s->gps.lock));
+                pthread_mutex_unlock(&(s->gps.lock));
+
+                // Write into FIFO
+                memcpy(&(s->fifo[s->head * 2]), iq_buff, iq_buff_size * 2 * sizeof(short));
+
+                s->head += (long)iq_buff_size;
+                if (s->head >= fifo_length)
+                    s->head -= fifo_length;
+                pthread_cond_signal(&(s->fifo_read_ready));
             }
-
-            // Store I/Q samples into buffer
-            iq_buff[pos_buffer] = (short)iq_acc[0];
-            iq_buff[pos_buffer + 1] = (short)iq_acc[1];
-            if (s->ch2_enable)
-            {
-                iq_buff[pos_buffer + 2] = (short)iq_acc2[0];
-                iq_buff[pos_buffer + 3] = (short)iq_acc2[1];
-            }
-        }
-
-        ////////////////////////////////////////////////////////////
-        // Write into FIFO
-        ///////////////////////////////////////////////////////////
-
-        if (!s->gps.ready) {
-            // Initialization has been done. Ready to create TX task.
-            printf("GPS signal generator is ready!\n");
-            s->gps.ready = 1;
-            pthread_cond_signal(&(s->gps.initialization_done));
-        }
-
-        // Wait until FIFO write is ready
-        pthread_mutex_lock(&(s->gps.lock));
-        while (!is_fifo_write_ready(s))
-            pthread_cond_wait(&(s->fifo_write_ready), &(s->gps.lock));
-        pthread_mutex_unlock(&(s->gps.lock));
-
-        // Write into FIFO
-        memcpy(&(s->fifo[s->head * 2]), iq_buff, iq_buff_size * 2 * sizeof(short));
-
-        s->head += (long)iq_buff_size;
-        if (s->head >= fifo_length)
-            s->head -= fifo_length;
-        pthread_cond_signal(&(s->fifo_read_ready));
-
         //
         // Update navigation message and channel allocation every 30 seconds
         //
-
         igrx = (int)(grx.sec*10.0+0.5);
 
         if (igrx%300==0) // Every 30 seconds
@@ -3027,7 +3033,8 @@ void *gps_task(void *arg)
             }
 
             // Show details about simulated channels
-            if (s->opt.verb)
+            if (s->opt.verb && (!s->fast_mode ||
+                (s->fast_mode && igrx % 30000 == 0)))
             {
                 printf("\n");
                 gps2date(&grx, &t0);
@@ -3054,6 +3061,8 @@ void *gps_task(void *arg)
         // printf("\rTime into run = %4.1f", subGpsTime(grx, g0));
         // fflush(stdout);
     }
+
+    goto exit;
 
 abort:
 #ifndef _WIN32
@@ -3086,6 +3095,7 @@ abort:
         if (dump_user_pos[i])
             fclose(log_files[i]);
     }
+    return (NULL);
 
 exit:
     // Close log file

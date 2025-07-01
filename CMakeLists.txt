@@ -25,7 +25,10 @@ target_link_libraries(bladegps
         # algorithms_libs_rtklib
         algorithms_libs_environment
         ${SPICE_LIB_DIR}cspice.a
+        csv
 )
+
+target_compile_definitions(bladegps PRIVATE SOURCE_FILE=\"${CMAKE_CURRENT_SOURCE_DIR}/gpssatellite.c\")
 
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O3 -Wall -I ${CMAKE_SOURCE_DIR}/bladeRF/host/libraries/libbladeRF/include -shared")
 set(CMAKE_EXE_LINKER_FLAGS "${PLATFORM_LDFLAGS} -lm -lpthread -L ${CMAKE_SOURCE_DIR}/bladeRF/host/build/output -lbladeRF -fPIC")
