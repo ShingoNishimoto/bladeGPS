@@ -1576,14 +1576,16 @@ bool computeRange(range_t *rho, const ephem_t *eph, const ionoutc_t *ionoutc, co
     rho->d = range;
 
     // Pseudorange.
-    rho->range = range - SPEED_OF_LIGHT*clk[0];
+    rho->range = range - SPEED_OF_LIGHT * clk[0];
 
-    // FIXME: this should be different when the SC speed is high.
     // Relative velocity of SV and receiver.
-    rate = dotProd(vel, los)/range;
+    double rel_vel[3];
+    for (uint8_t i = 0; i < 3; i++)
+        rel_vel[i] = vel[i] - receiver_states[4 + i];
+    rate = dotProd(rel_vel, los) / range;
 
     // Pseudorange rate.
-    rho->rate = rate; // - SPEED_OF_LIGHT*clk[1];
+    rho->rate = rate - SPEED_OF_LIGHT * clk[1];
 
     // Time of application.
     rho->g = g;
@@ -1606,9 +1608,9 @@ void computeCodePhase(channel_t *chan, range_t rho1, double dt)
     int ims;
     double rhorate;
 
-    // FIXME: this is approximate. Need to use rho->rate.
     // Pseudorange rate.
-    rhorate = (rho1.range - chan->rho0.range)/dt;
+    // rhorate = (rho1.range - chan->rho0.range)/dt;
+    rhorate = rho1.rate;
 
     // Carrier and code frequency.
     chan->f_carr = -rhorate/LAMBDA_L1;
@@ -1876,7 +1878,6 @@ int generateNavMsg(const gpstime_t g, channel_t *chan, int init)
  */
 int checkSatVisibility(const ephem_t *eph, const gpstime_t *g, const double *receiver_pos, channel_t *chan, double lunar_pos_ecef[3])
 {
-    // FIXME: for ECI.
     double llh[3],neu[3];
     double pos[3],vel[3],clk[3],los[3];
     double tmat[3][3];
