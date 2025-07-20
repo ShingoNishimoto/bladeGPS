@@ -28,6 +28,7 @@
 #include "../algorithms/libs/environment/frame.h"
 
 // #define NO_LOG_OUT
+#define MAX_FILENAME_LEN 1024
 
 int sinTable512[] = {
        2,   5,   8,  11,  14,  17,  20,  23,  26,  29,  32,  35,  38,  41,  44,  47,
@@ -244,10 +245,10 @@ void gps2date(const gpstime_t *g, datetime_t *t)
 }
 
 /*! \brief Convert Earth-centered Earth-fixed (ECEF) into Lat/Long/Heighth
- *  \param[in] xyz Input Array of X, Y and Z ECEF coordinates
+ *  \param[in] pos Input Array of X, Y and Z ECEF coordinates
  *  \param[out] llh Output Array of Latitude, Longitude and Height
  */
-void xyz2llh(const double *xyz, double *llh)
+void xyz2llh(const double *pos, double *llh)
 {
     double a,eps,e,e2;
     double x,y,z;
@@ -259,7 +260,7 @@ void xyz2llh(const double *xyz, double *llh)
     eps = 1.0e-3;
     e2 = e*e;
 
-    if (normVect(xyz)<eps)
+    if (normVect(pos)<eps)
     {
         // Invalid ECEF vector
         llh[0] = 0.0;
@@ -269,9 +270,9 @@ void xyz2llh(const double *xyz, double *llh)
         return;
     }
 
-    x = xyz[0];
-    y = xyz[1];
-    z = xyz[2];
+    x = pos[0];
+    y = pos[1];
+    z = pos[2];
 
     rho2 = x*x + y*y;
     dz = e2*z;
@@ -299,9 +300,9 @@ void xyz2llh(const double *xyz, double *llh)
 
 /*! \brief Convert Lat/Long/Height into Earth-centered Earth-fixed (ECEF)
  *  \param[in] llh Input Array of Latitude, Longitude and Height
- *  \param[out] xyz Output Array of X, Y and Z ECEF coordinates
+ *  \param[out] pos Output Array of X, Y and Z ECEF coordinates
  */
-void llh2xyz(const double *llh, double *xyz)
+void llh2xyz(const double *llh, double *pos)
 {
     double n;
     double a;
@@ -328,9 +329,9 @@ void llh2xyz(const double *llh, double *xyz)
     nph = n + llh[2];
 
     tmp = nph*clat;
-    xyz[0] = tmp*clon;
-    xyz[1] = tmp*slon;
-    xyz[2] = ((1.0-e2)*n + llh[2])*slat;
+    pos[0] = tmp*clon;
+    pos[1] = tmp*slon;
+    pos[2] = ((1.0-e2)*n + llh[2])*slat;
 
     return;
 }
@@ -363,15 +364,15 @@ void ltcmat(const double *llh, double t[3][3])
 }
 
 /*! \brief Convert Earth-centered Earth-Fixed to North-East-Up
- *  \param[in] xyz Input position as vector in ECEF format
+ *  \param[in] pos Input position as vector in ECEF format
  *  \param[in] t Intermediate matrix computed by \ref ltcmat
  *  \param[out] neu Output position as North-East-Up format
  */
-void ecef2neu(const double *xyz, double t[3][3], double *neu)
+void ecef2neu(const double *pos, double t[3][3], double *neu)
 {
-    neu[0] = t[0][0]*xyz[0] + t[0][1]*xyz[1] + t[0][2]*xyz[2];
-    neu[1] = t[1][0]*xyz[0] + t[1][1]*xyz[1] + t[1][2]*xyz[2];
-    neu[2] = t[2][0]*xyz[0] + t[2][1]*xyz[1] + t[2][2]*xyz[2];
+    neu[0] = t[0][0]*pos[0] + t[0][1]*pos[1] + t[0][2]*pos[2];
+    neu[1] = t[1][0]*pos[0] + t[1][1]*pos[1] + t[1][2]*pos[2];
+    neu[2] = t[2][0]*pos[0] + t[2][1]*pos[1] + t[2][2]*pos[2];
 
     return;
 }
@@ -1522,12 +1523,12 @@ double ionosphericDelay(const ionoutc_t *ionoutc, gpstime_t g, double *llh, doub
  *  \param[in] eph Const pointer of Ephemeris data of the satellite
  *  \param[in] ionoutc Const pointer of Ionosphere structure
  *  \param[in] g GPS time at time of receiving the signal
- *  \param[in] xyz position of the receiver
+ *  \param[in] receiver_states position of the receiver
  *  \param[in] ant_dir receiver antenna direction
  *  \param[in] elvMask elevation mask angle [deg]
  *  \return bool whether the result is valid or not
  */
-bool computeRange(range_t *rho, const ephem_t *eph, const ionoutc_t *ionoutc, const gpstime_t g, const double xyz[], const double* ant_dir, const double elvMask)
+bool computeRange(range_t *rho, const ephem_t *eph, const ionoutc_t *ionoutc, const gpstime_t g, const double receiver_states[], const double* ant_dir, const double elvMask)
 {
     double pos[3],vel[3],clk[2];
     double los[3];
@@ -1542,7 +1543,7 @@ bool computeRange(range_t *rho, const ephem_t *eph, const ionoutc_t *ionoutc, co
     satpos(*eph, g, pos, vel, clk);
 
     // Receiver to satellite vector and light-time.
-    subVect(los, pos, xyz);
+    subVect(los, pos, &(receiver_states[1]));
     tau = normVect(los)/SPEED_OF_LIGHT;
 
     // Extrapolate the satellite position backwards to the transmission time.
@@ -1557,10 +1558,10 @@ bool computeRange(range_t *rho, const ephem_t *eph, const ionoutc_t *ionoutc, co
     pos[1] = yrot;
 
     // Update los vector
-    subVect(los, pos, xyz);
+    subVect(los, pos, &(receiver_states[1]));
 
     // Azimuth and elevation angles. TODO: which los should be used?
-    xyz2llh(xyz, llh);
+    xyz2llh(&(receiver_states[1]), llh);
     ltcmat(llh, tmat);
     ecef2neu(los, tmat, neu);
     neu2ant(neu, ant_dir, neu_ant);
@@ -1577,6 +1578,7 @@ bool computeRange(range_t *rho, const ephem_t *eph, const ionoutc_t *ionoutc, co
     // Pseudorange.
     rho->range = range - SPEED_OF_LIGHT*clk[0];
 
+    // FIXME: this should be different when the SC speed is high.
     // Relative velocity of SV and receiver.
     rate = dotProd(vel, los)/range;
 
@@ -1604,6 +1606,7 @@ void computeCodePhase(channel_t *chan, range_t rho1, double dt)
     int ims;
     double rhorate;
 
+    // FIXME: this is approximate. Need to use rho->rate.
     // Pseudorange rate.
     rhorate = (rho1.range - chan->rho0.range)/dt;
 
@@ -1635,42 +1638,54 @@ void computeCodePhase(channel_t *chan, range_t rho1, double dt)
 }
 
 /*! \brief Read the list of user motions from the input file
- *  \param[out] xyz Output array of ECEF vectors for user motion
+ *  \param[out] receiver_states Output array of ECEF vectors for user motion
  *  \param[[in] filename File name of the text input file
  *  \returns Number of user data motion records read, -1 on error
  */
 
-//int readUserMotion(double xyz[USER_MOTION_SIZE][3], const char *filename)
-int readUserMotion(double **xyz, const char *filename)
+int readUserMotion(double **receiver_states, const char *filename)
 {
-    FILE *fp;
-    int numd;
-    char str[MAX_CHAR];
-    double t,x,y,z;
-
-    if (NULL==(fp=fopen(filename,"rt")))
-        return(-1);
-
-    for (numd=0; numd<USER_MOTION_SIZE; numd++)
+    FILE *fp = fopen(filename, "rt");
+    if (fp == NULL)
     {
-        if (fgets(str, MAX_CHAR, fp)==NULL)
+        perror("Failed to open user motion file");
+        return -1;
+    }
+
+    char str[MAX_CHAR];
+    int numd = 0;
+
+    while (numd < USER_MOTION_SIZE && fgets(str, sizeof(str), fp) != NULL)
+    {
+        double t, x, y, z, vx, vy, vz;
+
+        int n = sscanf(str, "%lf,%lf,%lf,%lf,%lf,%lf,%lf", &t, &x, &y, &z, &vx, &vy, &vz);
+        if (n < 4) // Require at least time and position
             break;
 
-        if (EOF==sscanf(str, "%lf,%lf,%lf,%lf", &t, &x, &y, &z)) // Read CSV line
+        if (receiver_states[numd] == NULL)
+        {
+            fprintf(stderr, "receiver_states[%d] is NULL\n", numd);
             break;
+        }
 
-        xyz[numd][0] = x;
-        xyz[numd][1] = y;
-        xyz[numd][2] = z;
+        receiver_states[numd][0] = t;
+        receiver_states[numd][1] = x;
+        receiver_states[numd][2] = y;
+        receiver_states[numd][3] = z;
+        receiver_states[numd][4] = vx;
+        receiver_states[numd][5] = vy;
+        receiver_states[numd][6] = vz;
+
+        numd++;
     }
 
     fclose(fp);
-
-    return (numd);
+    return numd;
 }
 
-//int readNmeaGGA(double xyz[USER_MOTION_SIZE][3], const char *filename)
-int readNmeaGGA(double **xyz, const char *filename)
+//int readNmeaGGA(double receiver_states[USER_MOTION_SIZE][3], const char *filename)
+int readNmeaGGA(double **receiver_states, const char *filename)
 {
     FILE *fp;
     int numd = 0;
@@ -1734,9 +1749,9 @@ int readNmeaGGA(double **xyz, const char *filename)
             // Convert geodetic position into ECEF coordinates
             llh2xyz(llh, pos);
 
-            xyz[numd][0] = pos[0];
-            xyz[numd][1] = pos[1];
-            xyz[numd][2] = pos[2];
+            receiver_states[numd][0] = pos[0];
+            receiver_states[numd][1] = pos[1];
+            receiver_states[numd][2] = pos[2];
 
             // Update the number of track points
             numd++;
@@ -1855,11 +1870,11 @@ int generateNavMsg(const gpstime_t g, channel_t *chan, int init)
 /*! \brief Check satellite visibility */
 /*  \param[in] eph Const pointer of the ephemeris structure
  *  \param[in] g Const pointer of Receiver time in gps time
- *  \param[in] xyz Array of receiver position
+ *  \param[in] receiver_pos Array of receiver position
  *  \param[out] chan Receiver channel, compute tx_antenna_gain, and azel
  *  \returns visible (1), invisible (0), or invalid (-1)
  */
-int checkSatVisibility(const ephem_t *eph, const gpstime_t *g, const double *xyz, channel_t *chan, double lunar_pos_ecef[3])
+int checkSatVisibility(const ephem_t *eph, const gpstime_t *g, const double *receiver_pos, channel_t *chan, double lunar_pos_ecef[3])
 {
     // FIXME: for ECI.
     double llh[3],neu[3];
@@ -1872,7 +1887,7 @@ int checkSatVisibility(const ephem_t *eph, const gpstime_t *g, const double *xyz
         return (-1); // Invalid
     }
 
-    xyz2llh(xyz,llh);
+    xyz2llh(receiver_pos,llh);
     if (llh[2] > 0)
     {
         const double ionosphere_exclusion_zone = 1000;  // km
@@ -1886,7 +1901,7 @@ int checkSatVisibility(const ephem_t *eph, const gpstime_t *g, const double *xyz
     ltcmat(llh, tmat);
 
     satpos(*eph, *g, pos, vel, clk);
-    subVect(los, pos, xyz);
+    subVect(los, pos, receiver_pos);
     // Check satellite direction
     double dot_prod_pos_los = dotProd(pos, los);
     if (dot_prod_pos_los < 0)
@@ -1941,12 +1956,12 @@ int checkSatVisibility(const ephem_t *eph, const gpstime_t *g, const double *xyz
  *  \param[out] allocatedSat Array of ch information according to the satellite
  *  \param[in] eph Array of the ephemeris structure
  *  \param[in] env Const pointer of environment structure
- *  \param[in] xyz Array of receiver position
+ *  \param[in] receiver_states Array of receiver position
  *  \param[in] ant_dir Array of receiver antenna direction (azi, ele)
  *  \param[in] elvMask elevation mask angle [deg]
  *  \returns Number of GNSS satellites
  */
-int allocateChannel(channel_t *chan, int *allocatedSat, const ephem_t* eph, const env_t *env, const double *xyz, const double* ant_dir, double elvMask, FILE* log_file)
+int allocateChannel(channel_t *chan, int *allocatedSat, const ephem_t* eph, const env_t *env, const double *receiver_states, const double* ant_dir, double elvMask, FILE* log_file)
 {
     int nsat=0;
     int i,sv;
@@ -1992,7 +2007,7 @@ int allocateChannel(channel_t *chan, int *allocatedSat, const ephem_t* eph, cons
     // 	fpt = fopen("moon_eci.csv", "w+");
     // 	// fpt = fopen("los_moon2sat.csv", "w+");
     // // double los_moon2sat[3];
-    // // subVect(los_moon2sat, xyz, lunar_pos_ecef);
+    // // subVect(los_moon2sat, receiver_states, lunar_pos_ecef);
     // // double distance_from_moon = normVect(los_moon2sat);
     // // fprintf(fpt, "%lf, %lf, %lf, %lf\n", los_moon2sat[0], los_moon2sat[1], los_moon2sat[2], distance_from_moon);
     // fprintf(fpt, "%lf, %lf, %lf, %lf, %lf\n", tt, lunar_pos_i[0], lunar_pos_i[1], lunar_pos_i[2], normVect(lunar_pos_i));
@@ -2002,7 +2017,7 @@ int allocateChannel(channel_t *chan, int *allocatedSat, const ephem_t* eph, cons
     for (sv=0; sv<MAX_SAT; sv++)
     {
         channel_t channel = {};
-        if(checkSatVisibility(&eph[sv], env->g, xyz, &channel, lunar_pos_ecef) == 1)
+        if(checkSatVisibility(&eph[sv], env->g, &(receiver_states[1]), &channel, lunar_pos_ecef) == 1)
         {
 #ifndef NO_LOG_OUT
             if (log_file != NULL)
@@ -2019,7 +2034,7 @@ int allocateChannel(channel_t *chan, int *allocatedSat, const ephem_t* eph, cons
                     if (chan[i].sat_id == -1)
                     {
                         channel.sat_id = sv;
-                        if (!computeRange(&rho, &eph[sv], &(env->ionoutc), grx, xyz, ant_dir, elvMask))
+                        if (!computeRange(&rho, &eph[sv], &(env->ionoutc), grx, receiver_states, ant_dir, elvMask))
                             break;
 
                         // Initialize sat_id, tx_antenna_gain, azel
@@ -2085,22 +2100,22 @@ int allocateChannel(channel_t *chan, int *allocatedSat, const ephem_t* eph, cons
     return(nsat); // isn't used now.
 }
 
-/*! \brief Set receiver position array "xyz" and return the size of simulation "numd". */
-/*  \param[out] xyz Array of user motion in ECEF frame
+/*! \brief Set receiver position array "receiver_states" and return the size of simulation "numd". */
+/*  \param[out] receiver_states Array of user motion in ECEF frame
  *  \param[in] opt Pointer of the option_t
  *  \returns Number of simulation length
  */
-int setReceiverPosition(double** xyz, const option_t* opt)
+int setReceiverPosition(double** receiver_states, option_t* opt)
 {
     int numd;
 
     for (int i = 0; i < USER_MOTION_SIZE; i++)
     {
-        xyz[i] = (double *)malloc(3 * sizeof(double));
-        if (xyz[i] == NULL)
+        receiver_states[i] = (double *)malloc(7 * sizeof(double));
+        if (receiver_states[i] == NULL)
         {
             for (int j = i - 1; j >= 0; j--)
-                free(xyz[i]);
+                free(receiver_states[i]);
 
             printf("ERROR: Failed to allocate user motion array.\n");
             return -1;
@@ -2111,10 +2126,10 @@ int setReceiverPosition(double** xyz, const option_t* opt)
     {
         // Read user motion file
         if (opt->nmeaGGA == true)
-            numd = readNmeaGGA(xyz, opt->umfile);
+            numd = readNmeaGGA(receiver_states, opt->umfile);
         else
         {
-            numd = readUserMotion(xyz, opt->umfile);
+            numd = readUserMotion(receiver_states, opt->umfile);
         }
 
         if (numd <= 0)
@@ -2122,6 +2137,8 @@ int setReceiverPosition(double** xyz, const option_t* opt)
             printf("ERROR: Failed to open user motion / NMEA GGA file.\n");
             return -1;
         }
+
+        xyz2llh(&(receiver_states[0][1]), opt->llh);
 
         // Set simulation duration
         if (numd > opt->iduration)
@@ -2132,20 +2149,24 @@ int setReceiverPosition(double** xyz, const option_t* opt)
         // Static geodetic coordinates input mode: "-l"
         // Added by scateu@gmail.com
         printf("Using static location mode.\n");
-        llh2xyz(opt->llh, xyz[0]); // Convert llh to xyz
+        double pos[3];
+        llh2xyz(opt->llh, pos);  // Convert llh to cartesian
 
         numd = opt->iduration;
 
         for (int iumd = 1; iumd < numd; iumd++)
         {
-            xyz[iumd][0] = xyz[0][0];
-            xyz[iumd][1] = xyz[0][1];
-            xyz[iumd][2] = xyz[0][2];
+            receiver_states[iumd][0] = 0;  // time
+            for (uint8_t i = 0; i < 3; i++)
+                {
+                    receiver_states[iumd][1 + i] = pos[i];
+                    receiver_states[iumd][4 + i] = 0;  // velocity
+                }
         }
     }
-    // TODO: better to resize xyz array according to the iduration
+    // TODO: better to resize receiver_states array according to the iduration
 
-    printf("xyz = %11.1f, %11.1f, %11.1f\n", xyz[0][0], xyz[0][1], xyz[0][2]);
+    printf("xyz = %11.1f, %11.1f, %11.1f\n", receiver_states[0][1], receiver_states[0][2], receiver_states[0][3]);
     printf("llh = %11.6f, %11.6f, %11.1f\n", opt->llh[0]*R2D, opt->llh[1]*R2D, opt->llh[2]);
 
     return numd;
@@ -2153,13 +2174,13 @@ int setReceiverPosition(double** xyz, const option_t* opt)
 
 /*! \brief print the debug message about channel */
 /*  \param[in] chan Array of receiver channels
- *  \param[in] xyz Array of user position
+ *  \param[in] pos Array of user position
  */
-void printChannelInformation(const channel_t *chan, const double *xyz)
+void printChannelInformation(const channel_t *chan, const double *pos)
 {
     double llh[3];
-    printf("xyz = %11.1f, %11.1f, %11.1f\n", xyz[0], xyz[1], xyz[2]);
-    xyz2llh(xyz, llh);
+    printf("xyz = %11.1f, %11.1f, %11.1f\n", pos[0], pos[1], pos[2]);
+    xyz2llh(pos, llh);
     printf("llh = %11.6f, %11.6f, %11.1f\n", llh[0]*R2D, llh[1]*R2D, llh[2]);
     printf("PRN    Azi   Ele PseudoRange   Ion TxGain\n");
     int i;
@@ -2177,11 +2198,11 @@ void printChannelInformation(const channel_t *chan, const double *xyz)
  *  \param[out] allocatedSat Array of channel allocation information
  *  \param[in] eph Const pointer to the corresponding ephemeris array
  *  \param[in] env Const pointer to the env_t struct
- *  \param[in] xyz Array of receiver position
+ *  \param[in] receiver_states Array of receiver position
  *  \param[in] ant_dir Array of receiver antenna direction (azi, ele)
  *  \param[in] elvMask elevation mask angle [deg]
  */
-void initializeChannel(channel_t* chan, int* allocatedSat, const ephem_t *eph, const env_t *env, const double *xyz, const double* ant_dir, const double elvmask, FILE* log_file)
+void initializeChannel(channel_t* chan, int* allocatedSat, const ephem_t *eph, const env_t *env, const double *receiver_states, const double* ant_dir, const double elvmask, FILE* log_file)
 {
     // Clear all channels
     int i;
@@ -2195,23 +2216,23 @@ void initializeChannel(channel_t* chan, int* allocatedSat, const ephem_t *eph, c
         allocatedSat[sv] = -1;
 
     // Allocate visible satellites
-    allocateChannel(chan, allocatedSat, eph, env, xyz, ant_dir, elvmask, log_file);
+    allocateChannel(chan, allocatedSat, eph, env, receiver_states, ant_dir, elvmask, log_file);
 
-    printChannelInformation(chan, xyz);
+    printChannelInformation(chan, &(receiver_states[1]));
 }
 
 /*! \brief Compute receiver observation and gain */
 /*  \param[out] chan Pointer of receiver channel
  *  \param[in] eph Array of the corresponding ephemeris
  *  \param[in] env Const pointer to the env_t struct
- *  \param[in] xyz Array of receiver position
+ *  \param[in] receiver_states Array of receiver position
  *  \param[in] opt Pointer of option
  *  \param[in] ant_pat Array of receiver antenna pattern
  *  \param[in] elvMask elevation mask angle [deg]
  *  \param[in out] cn0_log file pointer
  *  \returns valid(true) or not(false)
  */
-bool computeObservation(channel_t* chan, const ephem_t* eph, const env_t* env, const double* xyz, const option_t* opt, const double *ant_pat, const double elvmask, FILE* cn0_log)
+bool computeObservation(channel_t* chan, const ephem_t* eph, const env_t* env, const double* receiver_states, const option_t* opt, const double *ant_pat, const double elvmask, FILE* cn0_log)
 {
     const double delt = 1.0 / (double)tx_samplerate;
     if (chan->sat_id == -1)
@@ -2221,7 +2242,7 @@ bool computeObservation(channel_t* chan, const ephem_t* eph, const env_t* env, c
     range_t rho;
 
     // Compute current pseudorange
-    if (!computeRange(&rho, &eph[chan->sat_id], &(env->ionoutc), *(env->g), xyz, opt->rec_ant_dir, elvmask))
+    if (!computeRange(&rho, &eph[chan->sat_id], &(env->ionoutc), *(env->g), receiver_states, opt->rec_ant_dir, elvmask))
     {
         channel_t ch_clear = {};
         chan = &ch_clear;
@@ -2336,6 +2357,88 @@ void computeIQacc(int *iq_acc, channel_t * chan)
     iq_acc[1] = (iq_acc[1] + 64) >> 7;
 }
 
+
+bool open_log_file(FILE **file, const char *log_dir, const char *prefix, const char *suffix, const char *desc, int ch_index)
+{
+    char filename[MAX_FILENAME_LEN];
+    int written = snprintf(filename, sizeof(filename), "%s%s%s", log_dir, prefix, suffix);
+
+    if (written < 0 || written >= sizeof(filename))
+    {
+        fprintf(stderr, "Filename too long or error for %s (channel %d)\n", desc, ch_index);
+        return false;
+    }
+
+    printf("%s file path: %s\n", desc, filename);
+    *file = fopen(filename, "w");
+    if (*file == NULL)
+    {
+        perror("Unable to open file");
+        return false;
+    }
+
+    return true;
+}
+
+void write_headers(FILE *vis_file, FILE *cn0_file)
+{
+    fprintf(vis_file, "t");
+    for (uint32_t sv = 0; sv < MAX_SAT; sv++)
+        fprintf(vis_file, ", %d", sv + 1);
+    fprintf(vis_file, "\n");
+
+    fprintf(cn0_file, "t");
+    for (uint16_t ch_id = 0; ch_id < MAX_CHAN; ch_id++)
+        fprintf(cn0_file, ", %d", ch_id);
+    fprintf(cn0_file, "\n");
+}
+
+void initialize_log_files(const sim_t *s, FILE *log_files[2], FILE *visibility_log_files[2], FILE *cn0_log_files[2], bool dump_user_pos[2])
+{
+    const size_t log_dir_str_size = strlen(s->opt.log_dir);
+    if (log_dir_str_size == 0) return;
+
+    for (uint8_t i = 0; i < 2; i++)
+    {
+        if (!s->ch2_enable && i == 1) continue;
+
+        const char *suffix = (i == 0) ? "_ch1.txt" : "_ch2.txt";
+        const bool is_dynamic = (i == 0) ? !s->opt.staticLocationMode : !s->opt2.staticLocationMode;
+
+        if (is_dynamic)
+        {
+            dump_user_pos[i] = true;
+            if (!open_log_file(&log_files[i], s->opt.log_dir, "user_states", suffix, "User states", i))
+                goto exit;
+
+            fprintf(log_files[i], "t, gmst_sec, x, y, z, vx, vy, vz\n");
+        }
+
+        if (!open_log_file(&visibility_log_files[i], s->opt.log_dir, "visibility", suffix, "Visibility", i))
+            goto exit;
+
+        if (!open_log_file(&cn0_log_files[i], s->opt.log_dir, "cn0", suffix, "CN0", i))
+            goto exit;
+
+        write_headers(visibility_log_files[i], cn0_log_files[i]);
+    }
+
+    return;
+
+exit:
+    exit(EXIT_FAILURE);  // Or your own cleanup/handling
+}
+
+
+void log_user_position(FILE *log_file, bool enabled, double time, double *state)
+{
+    if (!enabled || log_file == NULL || state == NULL)
+        return;
+
+    fprintf(log_file, "%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf\n",
+            time, state[0], state[1], state[2], state[3], state[4], state[5], state[6]);
+}
+
 #ifndef _WIN32
 void changemode(int dir)
 {
@@ -2416,8 +2519,8 @@ void *gps_task(void *arg)
     int iumd;
     int numd;
     char umfile[MAX_CHAR];
-    // double xyz[USER_MOTION_SIZE][3], xyz2[USER_MOTION_SIZE][3];
-    double **xyz, **xyz2 = NULL;
+    // double receiver_states[USER_MOTION_SIZE][3], receiver_states2[USER_MOTION_SIZE][3];
+    double **receiver_states, **receiver_states2 = NULL;
 
     char navfile[MAX_CHAR];
 
@@ -2449,77 +2552,13 @@ void *gps_task(void *arg)
     double tmat[3][3];
     double neu[3];
 
-    // Log file of user motion
-    const size_t log_dir_str_size = strlen(s->opt.log_dir);
+    // Log files
     FILE *log_files[2] = {NULL, NULL};
     FILE *visibility_log_files[2] = {NULL, NULL};
     FILE *cn0_log_files[2] = {NULL, NULL};
     bool dump_user_pos[2] = {false, false};
-    if (log_dir_str_size != 0)
-    {
-        // FIXME: add CN0 log too.
-        for (uint8_t i = 0; i < 2; i++)
-        {
-            if (!s->ch2_enable && i == 1) continue;
 
-            char log_file_name[log_dir_str_size + sizeof("user_pos_ch1.txt")];
-            char visibility_file_name[log_dir_str_size + sizeof("visibility_ch1.txt")];
-            char cn0_file_name[log_dir_str_size + sizeof("cn0_ch1.txt")];
-            strcpy(log_file_name, s->opt.log_dir);
-            strcpy(visibility_file_name, s->opt.log_dir);
-            strcpy(cn0_file_name, s->opt.log_dir);
-            const char *suffix = (i == 0) ? "_ch1.txt" : "_ch2.txt";
-            // User pos file
-            strcpy(&log_file_name[log_dir_str_size], "user_pos");
-            strcpy(&log_file_name[log_dir_str_size + sizeof("user_pos") - 1], suffix);  // Except NULL at the end.
-            // Visibility file
-            strcpy(&visibility_file_name[log_dir_str_size], "visibility");
-            strcpy(&visibility_file_name[log_dir_str_size + sizeof("visibility") - 1], suffix);  // Except NULL at the end.
-            // for debug
-            printf("visibility file path: %s\n", visibility_file_name);
-            // CN0 file
-            strcpy(&cn0_file_name[log_dir_str_size], "cn0");
-            strcpy(&cn0_file_name[log_dir_str_size + sizeof("cn0") - 1], suffix);  // Except NULL at the end.
-
-            visibility_log_files[i] = fopen(visibility_file_name, "w");
-            if (visibility_log_files[i] == NULL)
-                {
-                    perror("Unable to open file");
-                    goto exit;
-                }
-            cn0_log_files[i] = fopen(cn0_file_name, "w");
-            if (cn0_log_files[i] == NULL)
-                {
-                    perror("Unable to open file");
-                    goto exit;
-                }
-            // Write the header
-            fprintf(visibility_log_files[i], "t");
-            fprintf(cn0_log_files[i], "t");
-            for (uint32_t sv = 0; sv < MAX_SAT; sv++)
-                {
-                    // PRN
-                    fprintf(visibility_log_files[i], ", %d", sv + 1);
-                }
-            fprintf(visibility_log_files[i], "\n");
-            for (uint16_t ch_id = 0; ch_id < MAX_CHAN; ch_id++)
-                fprintf(cn0_log_files[i], ", %d", ch_id);
-            fprintf(cn0_log_files[i], "\n");
-
-            if ((i == 0 && s->opt.staticLocationMode) ||
-                (i == 1 && s->opt2.staticLocationMode)) continue;
-            dump_user_pos[i] = true;
-            printf("user position file path: %s\n", log_file_name);
-            log_files[i] = fopen(log_file_name, "w");
-            if (log_files[i] == NULL)
-                {
-                    perror("Unable to open file");
-                    goto exit;
-                }
-            // Write the header
-            fprintf(log_files[i], "t, x, y, z\n");
-        }
-    }
+    initialize_log_files(s, log_files, visibility_log_files, cn0_log_files, dump_user_pos);
 
     ////////////////////////////////////////////////////////////
     // Read options
@@ -2556,13 +2595,13 @@ void *gps_task(void *arg)
     ////////////////////////////////////////////////////////////
 
     // Allocate user motion array
-    xyz = (double **)malloc(USER_MOTION_SIZE * sizeof(double **));
-    if (xyz == NULL)
+    receiver_states = (double **)malloc(USER_MOTION_SIZE * sizeof(double **));
+    if (receiver_states == NULL)
     {
         printf("ERROR: Failed to allocate user motion array.\n");
         goto exit;
     }
-    numd = setReceiverPosition(xyz, &(s->opt));
+    numd = setReceiverPosition(receiver_states, &(s->opt));
     if (numd < 0)
     {
         goto exit;
@@ -2570,13 +2609,13 @@ void *gps_task(void *arg)
 
     if (s->ch2_enable)
     {
-        xyz2 = (double **)malloc(USER_MOTION_SIZE * sizeof(double **));
-        if (xyz2 == NULL)
+        receiver_states2 = (double **)malloc(USER_MOTION_SIZE * sizeof(double **));
+        if (receiver_states2 == NULL)
         {
             printf("ERROR: Failed to allocate user motion array.\n");
             goto exit;
         }
-        int numd2 = setReceiverPosition(xyz2, &(s->opt2));
+        int numd2 = setReceiverPosition(receiver_states2, &(s->opt2));
         if (numd2 < 0)
         {
             goto exit;
@@ -2790,10 +2829,10 @@ void *gps_task(void *arg)
     // Initial reception time
     grx = incGpsTime(g0, 0.0);
 
-    initializeChannel(chan, allocatedSat, eph[ieph], &env, xyz[0], s->opt.rec_ant_dir, elvmask, visibility_log_files[0]);
+    initializeChannel(chan, allocatedSat, eph[ieph], &env, receiver_states[0], s->opt.rec_ant_dir, elvmask, visibility_log_files[0]);
     if (s->ch2_enable)
     {
-        initializeChannel(chan2, allocatedSat2, eph[ieph], &env, xyz2[0], s->opt2.rec_ant_dir, elvmask, visibility_log_files[1]);
+        initializeChannel(chan2, allocatedSat2, eph[ieph], &env, receiver_states2[0], s->opt2.rec_ant_dir, elvmask, visibility_log_files[1]);
     }
 
     ////////////////////////////////////////////////////////////
@@ -2867,9 +2906,10 @@ void *gps_task(void *arg)
             }
 
             // Stay at the current location
-            xyz[iumd][0] = xyz[iumd-1][0];
-            xyz[iumd][1] = xyz[iumd-1][1];
-            xyz[iumd][2] = xyz[iumd-1][2];
+            for (i = 0; i < 7; i++)
+            {
+                receiver_states[iumd][i] = receiver_states[iumd - 1][i];
+            }
 
             if ((direction!=UNDEF)&&(velocity>=0.0))
             {
@@ -2895,17 +2935,14 @@ void *gps_task(void *arg)
                     break;
                 }
 
-                xyz[iumd][0] += tmat[0][0]*neu[0] + tmat[1][0]*neu[1] + tmat[2][0]*neu[2];
-                xyz[iumd][1] += tmat[0][1]*neu[0] + tmat[1][1]*neu[1] + tmat[2][1]*neu[2];
-                xyz[iumd][2] += tmat[0][2]*neu[0] + tmat[1][2]*neu[1] + tmat[2][2]*neu[2];
+                for (i = 0; i < 3; i++)
+                    receiver_states[iumd][1 + i] += tmat[0][i] * neu[0] + tmat[1][i] * neu[1] + tmat[2][i] * neu[2];
             }
         }
 
         // Logging receiver position with gpstime.
-        if (dump_user_pos[0])
-            fprintf(log_files[0], "%lf,%lf,%lf,%lf\n", grx.sec, xyz[iumd][0], xyz[iumd][1], xyz[iumd][2]);
-        if (dump_user_pos[1])
-            fprintf(log_files[1], "%lf,%lf,%lf,%lf\n", grx.sec, xyz2[iumd][0], xyz2[iumd][1], xyz2[iumd][2]);
+        log_user_position(log_files[0], dump_user_pos[0], grx.sec, receiver_states[iumd]);
+        log_user_position(log_files[1], dump_user_pos[1], grx.sec, receiver_states2[iumd]);
 
 #ifndef NO_LOG_OUT
         // TODO: the log output is too frequent?
@@ -2915,11 +2952,11 @@ void *gps_task(void *arg)
 #endif  // NO_LOG_OUT
         for (i=0; i<MAX_CHAN; i++)
         {
-            computeObservation(&chan[i], eph[ieph], &env, xyz[iumd], &(s->opt), ant_pat, elvmask, cn0_log_files[0]);
+            computeObservation(&chan[i], eph[ieph], &env, receiver_states[iumd], &(s->opt), ant_pat, elvmask, cn0_log_files[0]);
 
             if (s->ch2_enable)
             {
-                computeObservation(&chan2[i], eph[ieph], &env, xyz2[iumd], &(s->opt2), ant_pat, elvmask, cn0_log_files[1]);
+                computeObservation(&chan2[i], eph[ieph], &env, receiver_states2[iumd], &(s->opt2), ant_pat, elvmask, cn0_log_files[1]);
             }
         }
 #ifndef NO_LOG_OUT
@@ -3026,10 +3063,10 @@ void *gps_task(void *arg)
             }
 
             // Update channel allocation
-            allocateChannel(chan, allocatedSat, eph[ieph], &env, xyz[iumd], s->opt.rec_ant_dir, elvmask, visibility_log_files[0]);
+            allocateChannel(chan, allocatedSat, eph[ieph], &env, receiver_states[iumd], s->opt.rec_ant_dir, elvmask, visibility_log_files[0]);
             if (s->ch2_enable)
             {
-                allocateChannel(chan2, allocatedSat2, eph[ieph], &env, xyz2[iumd], s->opt2.rec_ant_dir, elvmask, visibility_log_files[1]);
+                allocateChannel(chan2, allocatedSat2, eph[ieph], &env, receiver_states2[iumd], s->opt2.rec_ant_dir, elvmask, visibility_log_files[1]);
             }
 
             // Show details about simulated channels
@@ -3042,13 +3079,13 @@ void *gps_task(void *arg)
                     t0.y, t0.m, t0.d, t0.hh, t0.mm, t0.sec, grx.week, grx.sec);
                 // channel 1
                 printf("channel 1\n");
-                printChannelInformation(chan, xyz[iumd]);
+                printChannelInformation(chan, &(receiver_states[iumd][1]));
 
                 // channel 2
                 if (s->ch2_enable)
                 {
                     printf("\nchannel 2\n");
-                    printChannelInformation(chan2, xyz2[iumd]);
+                    printChannelInformation(chan2, &(receiver_states2[iumd][1]));
                 }
             }
         }
@@ -3077,13 +3114,13 @@ abort:
 
     // Free user motion array
     for (i=0; i<USER_MOTION_SIZE; i++)
-        free(xyz[i]);
-    free(xyz);
+        free(receiver_states[i]);
+    free(receiver_states);
     if (s->ch2_enable)
     {
         for (i=0; i<USER_MOTION_SIZE; i++)
-            free(xyz2[i]);
-        free(xyz2);
+            free(receiver_states2[i]);
+        free(receiver_states2);
     }
 
     // Close log file
