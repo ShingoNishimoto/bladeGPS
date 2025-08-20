@@ -11,10 +11,10 @@
 #endif
 
 /*! \brief Maximum length of a line in a text file (RINEX, motion) */
-#define MAX_CHAR (100)
+#define MAX_CHAR (256)
 
 /*! \brief Maximum number of channels we simulate */
-#define MAX_CHAN (12)
+#define MAX_CHAN (24)
 
 /*! \brief Maximum number of user motion points */
 #define USER_MOTION_SIZE (864000) // for 24 hours at 10Hz
