@@ -1751,9 +1751,9 @@ int readNmeaGGA(double **receiver_states, const char *filename)
             // Convert geodetic position into ECEF coordinates
             llh2xyz(llh, pos);
 
-            receiver_states[numd][0] = pos[0];
-            receiver_states[numd][1] = pos[1];
-            receiver_states[numd][2] = pos[2];
+            receiver_states[numd][1] = pos[0];
+            receiver_states[numd][2] = pos[1];
+            receiver_states[numd][3] = pos[2];
 
             // Update the number of track points
             numd++;
@@ -2943,7 +2943,8 @@ void *gps_task(void *arg)
 
         // Logging receiver position with gpstime.
         log_user_position(log_files[0], dump_user_pos[0], grx.sec, receiver_states[iumd]);
-        log_user_position(log_files[1], dump_user_pos[1], grx.sec, receiver_states2[iumd]);
+        if (s->ch2_enable)
+            log_user_position(log_files[1], dump_user_pos[1], grx.sec, receiver_states2[iumd]);
 
 #ifndef NO_LOG_OUT
         // TODO: the log output is too frequent?
