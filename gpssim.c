@@ -193,55 +193,152 @@ void codegen(int *ca, int prn)
     return;
 }
 
+/* Simple leap-second table (extend as needed) */
+typedef struct { int y,m,d; int total; } leap_sec_t;
+static const leap_sec_t leap_table[] = {
+    {1981, 6, 30, 1},  {1982, 6, 30, 2},  {1983, 6, 30, 3},
+    {1985, 6, 30, 4},  {1987, 12,31, 5},  {1989, 12,31,6},
+    {1990,12,31,7},    {1992,6,30,8},     {1993,6,30,9},
+    {1994,6,30,10},    {1995,12,31,11},   {1997,6,30,12},
+    {1998,12,31,13},   {2005,12,31,14},   {2008,12,31,15},
+    {2012,6,30,16},    {2015,6,30,17},    {2016,12,31,18},
+    {0,0,0,0} // sentinel
+};
+
+/* Compute cumulative leap seconds at a given UTC date */
+static int leap_seconds(int year, int month, int day)
+{
+    int i=0;
+    int ls=0;
+    while(leap_table[i].y) {
+        if(year>leap_table[i].y ||
+          (year==leap_table[i].y && month>leap_table[i].m) ||
+          (year==leap_table[i].y && month==leap_table[i].m && day>leap_table[i].d)) {
+            ls = leap_table[i].total;
+        } else break;
+        i++;
+    }
+    return ls;
+}
+
 /*! \brief Convert a UTC date into a GPS date
  *  \param[in] t input date in UTC form
  *  \param[out] g output date in GPS form
  */
 void date2gps(const datetime_t *t, gpstime_t *g)
 {
-    int doy[12] = {0,31,59,90,120,151,181,212,243,273,304,334};
-    int ye;
-    int de;
-    int lpdays;
+    // int doy[12] = {0,31,59,90,120,151,181,212,243,273,304,334};
+    // int ye;
+    // int de;
+    // int lpdays;
 
-    ye = t->y - 1980;
+    // ye = t->y - 1980;
 
-    // Compute the number of leap days since Jan 5/Jan 6, 1980.
-    lpdays = ye/4 + 1;
-    if ((ye%4)==0 && t->m<=2)
-        lpdays--;
+    // // Compute the number of leap days since Jan 5/Jan 6, 1980.
+    // lpdays = ye/4 + 1;
+    // if ((ye%4)==0 && t->m<=2)
+    //     lpdays--;
 
-    // Compute the number of days elapsed since Jan 5/Jan 6, 1980.
-    de = ye*365 + doy[t->m-1] + t->d + lpdays - 6;
+    // // Compute the number of days elapsed since Jan 5/Jan 6, 1980.
+    // de = ye*365 + doy[t->m-1] + t->d + lpdays - 6;
 
-    // Convert time to GPS weeks and seconds.
-    g->week = de / 7;
-    g->sec = (double)(de%7)*SECONDS_IN_DAY + t->hh*SECONDS_IN_HOUR
-        + t->mm*SECONDS_IN_MINUTE + t->sec + SECONDS_UTC_TO_GPS;
+    // // Convert time to GPS weeks and seconds.
+    // g->week = de / 7;
+    // g->sec = (double)(de%7)*SECONDS_IN_DAY + t->hh*SECONDS_IN_HOUR
+    //     + t->mm*SECONDS_IN_MINUTE + t->sec + SECONDS_UTC_TO_GPS;
 
-    return;
+    // return;
+
+    int Y = t->y;
+    int M = t->m;
+    int D = t->d;
+    if(M <= 2) { Y -= 1; M += 12; }
+
+    double day_frac = D + (t->hh/24.0) + (t->mm/1440.0) + (t->sec/86400.0);
+
+    int A = Y/100;
+    int B = 2 - A + A/4;
+
+    double JD_utc = floor(365.25*(Y+4716)) + floor(30.6001*(M+1)) + day_frac + B - 1524.5;
+
+    double JD_gps_epoch = 2444244.5; // 1980-01-06 00:00:00 UTC
+
+    // cumulative leap seconds
+    int ls = leap_seconds(t->y, t->m, t->d);
+
+    // GPS seconds = (JD - JD_gps) * 86400 + (TAI-UTC -19)
+    double gps_sec = (JD_utc - JD_gps_epoch) * SECONDS_IN_DAY + ls - 19;
+
+    g->week = (int)(gps_sec / 604800.0);
+    g->sec  = fmod(gps_sec, 604800.0);
 }
 
 void gps2date(const gpstime_t *g, datetime_t *t)
 {
-    long c,d,e,f;
-    double gsec = round(g->sec - SECONDS_UTC_TO_GPS);
+    // long c,d,e,f;
+    // double gsec = round(g->sec - SECONDS_UTC_TO_GPS);
 
-    // Convert Julian day number to calendar date
-    c = (long)(7.0*(double)g->week + floor(gsec/86400.0)+2444245.0) + 1537;
-    d = (long)(((double)c-122.1)/365.25);
-    e = 365*d + d/4;
-    f = (long)((double)(c-e)/30.6001 );
+    // // Convert Julian day number to calendar date
+    // c = (long)(7.0*(double)g->week + floor(gsec/86400.0)+2444245.0) + 1537;
+    // d = (long)(((double)c-122.1)/365.25);
+    // e = 365*d + d/4;
+    // f = (long)((double)(c-e)/30.6001 );
 
-    t->d = c - e - (int)(30.6001*f);
-    t->m = f - 1 - 12*(f/14);
-    t->y  = d - 4715 - ((7 + t->m)/10);
+    // t->d = c - e - (int)(30.6001*f);
+    // t->m = f - 1 - 12*(f/14);
+    // t->y  = d - 4715 - ((7 + t->m)/10);
 
-    t->hh = ((int)(gsec/3600.0))%24;
-    t->mm = ((int)(gsec/60.0))%60;
-    t->sec = gsec - 60.0*floor(gsec/60.0);
+    // t->hh = ((int)(gsec/3600.0))%24;
+    // t->mm = ((int)(gsec/60.0))%60;
+    // t->sec = gsec - 60.0*floor(gsec/60.0);
 
-    return;
+    // return;
+
+    double gps_sec = g->week*604800.0 + g->sec;
+
+    // GPS -> TAI
+    double tai_sec = gps_sec + 19.0;
+
+    // Initial approximation: UTC = TAI - cumulative leap seconds
+    double utc_sec = tai_sec; // will subtract leap seconds iteratively
+
+    int done = 0;
+    int ls = 0;
+    while(!done) {
+        // Convert seconds since GPS epoch to Julian Day
+        double jd = 2444244.5 + (utc_sec / SECONDS_IN_DAY);
+
+        // Convert JD to calendar date
+        double Z = floor(jd + 0.5);
+        double F = jd + 0.5 - Z;
+
+        double alpha = floor((Z - 1867216.25)/36524.25);
+        double A = Z + 1 + alpha - floor(alpha/4.0);
+        double B = A + 1524;
+        double C = floor((B - 122.1)/365.25);
+        double D = floor(365.25*C);
+        double E = floor((B - D)/30.6001);
+
+        t->d = (int)(B - D - floor(30.6001*E) + F);
+        t->m = (int)(E < 14 ? E - 1 : E - 13);
+        t->y = (int)(t->m > 2 ? C - 4716 : C - 4715);
+
+        // Compute HH:MM:SS
+        double day_frac = F;
+        t->hh = (int)(day_frac * 24.0);
+        t->mm = (int)((day_frac*24.0 - t->hh)*60.0);
+        t->sec = ((day_frac*24.0 - t->hh)*60.0 - t->mm)*60.0;
+
+        // Check leap seconds for this date
+        int new_ls = leap_seconds(t->y, t->m, t->d);
+        if(new_ls == ls) {
+            done = 1;
+        } else {
+            // adjust UTC seconds
+            utc_sec = tai_sec - new_ls;
+            ls = new_ls;
+        }
+    }
 }
 
 /*! \brief Convert Earth-centered Earth-fixed (ECEF) into Lat/Long/Heighth
@@ -1546,14 +1643,20 @@ bool computeRange(range_t *rho, const ephem_t *eph, const ionoutc_t *ionoutc, co
     subVect(los, pos, &(receiver_states[1]));
     tau = normVect(los)/SPEED_OF_LIGHT;
 
+    // TODO: check if this extrapolation step is right, maybe it is because receiver algorithm has estimating the GNSS satellite position based on the measured travel time?
     // Extrapolate the satellite position backwards to the transmission time.
     pos[0] -= vel[0]*tau;
     pos[1] -= vel[1]*tau;
     pos[2] -= vel[2]*tau;
 
     // Earth rotation correction. The change in velocity can be neglected.
-    xrot = pos[0] + pos[1]*OMEGA_EARTH*tau;
-    yrot = pos[1] - pos[0]*OMEGA_EARTH*tau;
+    double theta = OMEGA_EARTH * tau;
+    double c_theta = cos(theta);
+    double s_theta = sin(theta);
+    // xrot = pos[0] + pos[1]*OMEGA_EARTH*tau;
+    // yrot = pos[1] - pos[0]*OMEGA_EARTH*tau;
+    xrot = pos[0] * c_theta + pos[1] * s_theta;
+    yrot = pos[1] * c_theta - pos[0] * s_theta;
     pos[0] = xrot;
     pos[1] = yrot;
 
@@ -1609,15 +1712,17 @@ void computeCodePhase(channel_t *chan, range_t rho1, double dt)
     double rhorate;
 
     // Pseudorange rate.
-    // rhorate = (rho1.range - chan->rho0.range)/dt;
-    rhorate = rho1.rate;
+    rhorate = (rho1.range - chan->rho0.range)/dt;
+    // rhorate = rho1.rate;
 
     // Carrier and code frequency.
     chan->f_carr = -rhorate/LAMBDA_L1;
-    chan->f_code = CODE_FREQ + chan->f_carr*CARR_TO_CODE;
+    // chan->f_carr = -rhorate / ((SPEED_OF_LIGHT - rhorate) / TX_FREQUENCY);
+    chan->f_code = CODE_FREQ + chan->f_carr * CARR_TO_CODE;
 
     // Initial code phase and data bit counters.
     ms = ((subGpsTime(chan->rho0.g,chan->g0)+6.0) - chan->rho0.range/SPEED_OF_LIGHT)*1000.0;
+    // ms = ((subGpsTime(chan->rho0.g, chan->g0) + 6.0) - chan->rho0.range / (SPEED_OF_LIGHT - rhorate)) * 1000.0;
 
     ims = (int)ms;
     chan->code_phase = (ms-(double)ims)*CA_SEQ_LEN; // in chip
@@ -1990,6 +2095,7 @@ int allocateChannel(channel_t *chan, int *allocatedSat, const ephem_t* eph, cons
         fprintf(log_file, "%lf", grx.sec);
     #endif  // NO_LOG_OUT
 
+    // FIXME: maybe this is heavy.
     // Preparation for moon occultation check
     double tt = ConvGPSTimeToTt(time_system, env->g->week, env->g->sec);
     const double* lunar_pos_i = GetPositionI(moon_, tt);
@@ -2155,7 +2261,7 @@ int setReceiverPosition(double** receiver_states, option_t* opt)
 
         numd = opt->iduration;
 
-        for (int iumd = 1; iumd < numd; iumd++)
+        for (int iumd = 0; iumd < numd; iumd++)
         {
             receiver_states[iumd][0] = 0;  // time
             for (uint8_t i = 0; i < 3; i++)
